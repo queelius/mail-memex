@@ -13,7 +13,6 @@ from typer.testing import CliRunner
 
 from mtk.cli.main import app
 
-
 runner = CliRunner()
 
 

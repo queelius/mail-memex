@@ -30,7 +30,7 @@ class PullResult:
     errors: list[str] = field(default_factory=list)
     uid_validity_reset: bool = False
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "account": self.account,
             "folder": self.folder,
@@ -150,7 +150,7 @@ class PullSync:
     def _process_message(
         self,
         uid: int,
-        data: dict,
+        data: dict[bytes, Any],
         folder: str,
         result: PullResult,
     ) -> None:

@@ -7,8 +7,8 @@ concatenated in a single file, separated by "From " lines.
 from __future__ import annotations
 
 import mailbox
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 from mtk.importers.base import BaseImporter
 from mtk.importers.parser import EmailParser, ParsedEmail
@@ -66,7 +66,7 @@ class MboxImporter(BaseImporter):
 
         mbox = mailbox.mbox(file_path)
         try:
-            msg = mbox[index]
+            msg = mbox[index]  # type: ignore[index]
             if msg is None:
                 raise ValueError(f"Message {index} not found in mbox")
 

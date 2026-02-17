@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 from mtk.importers.parser import ParsedEmail
 
@@ -18,7 +18,7 @@ class ImportStats:
     imported: int = 0
     skipped_duplicate: int = 0
     skipped_error: int = 0
-    errors: list[tuple[str, str]] = None  # (path, error message)
+    errors: list[tuple[str, str]] | None = None  # (path, error message)
 
     def __post_init__(self) -> None:
         if self.errors is None:

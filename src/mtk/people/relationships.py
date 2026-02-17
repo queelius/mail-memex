@@ -13,6 +13,7 @@ import json
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -166,9 +167,7 @@ class RelationshipAnalyzer:
 
         # Get thread count
         thread_result = self.session.execute(
-            select(func.count(func.distinct(Email.thread_id))).where(
-                Email.sender_id == person_id
-            )
+            select(func.count(func.distinct(Email.thread_id))).where(Email.sender_id == person_id)
         ).scalar()
 
         return CorrespondenceStats(
@@ -197,9 +196,13 @@ class RelationshipAnalyzer:
         Returns:
             Dict mapping time periods to email counts.
         """
-        emails = self.session.execute(
-            select(Email.date).where(Email.sender_id == person_id).order_by(Email.date)
-        ).scalars().all()
+        emails = (
+            self.session.execute(
+                select(Email.date).where(Email.sender_id == person_id).order_by(Email.date)
+            )
+            .scalars()
+            .all()
+        )
 
         timeline: dict[str, int] = defaultdict(int)
 
@@ -238,7 +241,7 @@ class RelationshipAnalyzer:
         """
         # Get all email exchanges (sender -> recipients via threads)
         edge_counts: dict[tuple[int, int], int] = defaultdict(int)
-        node_info: dict[int, dict] = {}
+        node_info: dict[int, dict[str, Any]] = {}
 
         # Get all persons with their email counts
         persons_query = select(Person).where(Person.email_count >= min_emails)
@@ -256,11 +259,15 @@ class RelationshipAnalyzer:
             thread_id = thread_row.thread_id
 
             # Get all participants in this thread
-            participants = self.session.execute(
-                select(func.distinct(Email.sender_id))
-                .where(Email.thread_id == thread_id)
-                .where(Email.sender_id.isnot(None))
-            ).scalars().all()
+            participants = (
+                self.session.execute(
+                    select(func.distinct(Email.sender_id))
+                    .where(Email.thread_id == thread_id)
+                    .where(Email.sender_id.isnot(None))
+                )
+                .scalars()
+                .all()
+            )
 
             # Add edges between all pairs
             participants_list = list(participants)
@@ -321,7 +328,7 @@ class RelationshipAnalyzer:
             "    <description>Email correspondence network</description>",
             "  </meta>",
             '  <graph mode="static" defaultedgetype="undirected">',
-            "    <attributes class=\"node\">",
+            '    <attributes class="node">',
             '      <attribute id="0" title="email" type="string"/>',
             '      <attribute id="1" title="email_count" type="integer"/>',
             "    </attributes>",
@@ -330,15 +337,19 @@ class RelationshipAnalyzer:
 
         for node in nodes:
             name_escaped = node.name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            email_escaped = node.email.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            lines.extend([
-                f'      <node id="{node.person_id}" label="{name_escaped}">',
-                "        <attvalues>",
-                f'          <attvalue for="0" value="{email_escaped}"/>',
-                f'          <attvalue for="1" value="{node.email_count}"/>',
-                "        </attvalues>",
-                "      </node>",
-            ])
+            email_escaped = (
+                node.email.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            )
+            lines.extend(
+                [
+                    f'      <node id="{node.person_id}" label="{name_escaped}">',
+                    "        <attvalues>",
+                    f'          <attvalue for="0" value="{email_escaped}"/>',
+                    f'          <attvalue for="1" value="{node.email_count}"/>',
+                    "        </attvalues>",
+                    "      </node>",
+                ]
+            )
 
         lines.append("    </nodes>")
         lines.append("    <edges>")
@@ -349,11 +360,13 @@ class RelationshipAnalyzer:
                 f'target="{edge.target_id}" weight="{edge.weight}"/>'
             )
 
-        lines.extend([
-            "    </edges>",
-            "  </graph>",
-            "</gexf>",
-        ])
+        lines.extend(
+            [
+                "    </edges>",
+                "  </graph>",
+                "</gexf>",
+            ]
+        )
 
         return "\n".join(lines)
 
@@ -419,25 +432,33 @@ class RelationshipAnalyzer:
 
         for node in nodes:
             name_escaped = node.name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            email_escaped = node.email.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            lines.extend([
-                f'    <node id="{node.person_id}">',
-                f'      <data key="name">{name_escaped}</data>',
-                f'      <data key="email">{email_escaped}</data>',
-                f'      <data key="email_count">{node.email_count}</data>',
-                "    </node>",
-            ])
+            email_escaped = (
+                node.email.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            )
+            lines.extend(
+                [
+                    f'    <node id="{node.person_id}">',
+                    f'      <data key="name">{name_escaped}</data>',
+                    f'      <data key="email">{email_escaped}</data>',
+                    f'      <data key="email_count">{node.email_count}</data>',
+                    "    </node>",
+                ]
+            )
 
         for i, edge in enumerate(edges):
-            lines.extend([
-                f'    <edge id="e{i}" source="{edge.source_id}" target="{edge.target_id}">',
-                f'      <data key="weight">{edge.weight}</data>',
-                "    </edge>",
-            ])
+            lines.extend(
+                [
+                    f'    <edge id="e{i}" source="{edge.source_id}" target="{edge.target_id}">',
+                    f'      <data key="weight">{edge.weight}</data>',
+                    "    </edge>",
+                ]
+            )
 
-        lines.extend([
-            "  </graph>",
-            "</graphml>",
-        ])
+        lines.extend(
+            [
+                "  </graph>",
+                "</graphml>",
+            ]
+        )
 
         return "\n".join(lines)

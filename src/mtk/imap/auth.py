@@ -6,6 +6,7 @@ Credentials stored in system keyring (never in config files).
 from __future__ import annotations
 
 import contextlib
+from types import ModuleType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -19,7 +20,7 @@ class AuthManager:
         try:
             import keyring as _keyring
 
-            self._keyring = _keyring
+            self._keyring: ModuleType | None = _keyring
         except ImportError:
             self._keyring = None
 
@@ -38,7 +39,8 @@ class AuthManager:
         """Retrieve password from system keyring."""
         if not self._keyring:
             return None
-        return self._keyring.get_password(account.keyring_service, account.username)
+        result: str | None = self._keyring.get_password(account.keyring_service, account.username)
+        return result
 
     def delete_password(self, account: ImapAccountConfig) -> None:
         """Remove password from system keyring."""
@@ -74,14 +76,14 @@ class GmailOAuth2:
             from google.auth.transport.requests import Request
             from google.oauth2.credentials import Credentials
 
-            creds = Credentials(
+            creds = Credentials(  # type: ignore[no-untyped-call]
                 token=None,
                 refresh_token=refresh_token,
                 token_uri="https://oauth2.googleapis.com/token",
                 client_id=self._get_client_id(),
                 client_secret=self._get_client_secret(),
             )
-            creds.refresh(Request())
+            creds.refresh(Request())  # type: ignore[no-untyped-call]
             return creds.token
         except Exception:
             return None

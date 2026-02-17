@@ -26,7 +26,7 @@ class PushResult:
     failed: int = 0
     errors: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "account": self.account,
             "processed": self.processed,

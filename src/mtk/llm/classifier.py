@@ -47,7 +47,7 @@ class SummaryResult:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
-        result = {
+        result: dict[str, Any] = {
             "message_id": self.message_id,
             "summary": self.summary,
         }
@@ -101,9 +101,7 @@ class EmailClassifier:
 
         try:
             response = self.provider.complete(prompt, max_tokens=200)
-            return self._parse_classification_response(
-                email.message_id, response, categories
-            )
+            return self._parse_classification_response(email.message_id, response, categories)
         except Exception as e:
             return ClassificationResult(
                 message_id=email.message_id,
@@ -227,7 +225,9 @@ Subject: {email.subject}
                 # Extract reasoning if present
                 reasoning = ""
                 if ":" in response or "because" in response_lower:
-                    parts = response.split(":", 1) if ":" in response else response.split("because", 1)
+                    parts = (
+                        response.split(":", 1) if ":" in response else response.split("because", 1)
+                    )
                     if len(parts) > 1:
                         reasoning = parts[1].strip()
 

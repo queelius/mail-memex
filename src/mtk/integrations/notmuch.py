@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from mtk.core.models import Tag
+
 
 @dataclass
 class NotmuchSyncResult:
@@ -68,7 +70,7 @@ class NotmuchSync:
         self.tag_prefix = tag_prefix
         self._db = None
 
-    def _get_notmuch_db(self, mode: str = "ro"):
+    def _get_notmuch_db(self, mode: str = "ro") -> Any:
         """Get notmuch database connection.
 
         Args:
@@ -79,12 +81,10 @@ class NotmuchSync:
         except ImportError:
             raise ImportError(
                 "notmuch2 package required. Install with: pip install notmuch2"
-            )
+            ) from None
 
         if mode == "rw":
-            return notmuch2.Database(
-                str(self.notmuch_path), mode=notmuch2.Database.MODE.READ_WRITE
-            )
+            return notmuch2.Database(str(self.notmuch_path), mode=notmuch2.Database.MODE.READ_WRITE)
         return notmuch2.Database(str(self.notmuch_path))
 
     def status(self) -> dict[str, Any]:
@@ -93,7 +93,8 @@ class NotmuchSync:
         Returns:
             Dictionary with notmuch database info and sync statistics.
         """
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
+
         from mtk.core.models import Email, Tag
 
         result = {
@@ -104,12 +105,8 @@ class NotmuchSync:
         }
 
         # Get mtk stats
-        result["mtk_emails"] = (
-            self.session.execute(select(func.count(Email.id))).scalar() or 0
-        )
-        result["mtk_tags"] = (
-            self.session.execute(select(func.count(Tag.id))).scalar() or 0
-        )
+        result["mtk_emails"] = self.session.execute(select(func.count(Email.id))).scalar() or 0
+        result["mtk_tags"] = self.session.execute(select(func.count(Tag.id))).scalar() or 0
 
         # Try to connect to notmuch
         try:
@@ -118,9 +115,7 @@ class NotmuchSync:
             result["notmuch_revision"] = db.revision().rev
 
             # Count emails with common message IDs
-            mtk_ids = set(
-                self.session.execute(select(Email.message_id)).scalars().all()
-            )
+            mtk_ids = set(self.session.execute(select(Email.message_id)).scalars().all())
 
             common_count = 0
             for msg in db.messages("*"):
@@ -146,6 +141,7 @@ class NotmuchSync:
             NotmuchSyncResult with statistics.
         """
         from sqlalchemy import select
+
         from mtk.core.models import Email, Tag
 
         result = NotmuchSyncResult(operation="pull")
@@ -157,10 +153,7 @@ class NotmuchSync:
             return result
 
         # Get all mtk emails by message_id
-        mtk_emails = {
-            e.message_id: e
-            for e in self.session.execute(select(Email)).scalars()
-        }
+        mtk_emails = {e.message_id: e for e in self.session.execute(select(Email)).scalars()}
 
         try:
             for nm_msg in nm_db.messages("*"):
@@ -172,15 +165,13 @@ class NotmuchSync:
                 result.emails_processed += 1
 
                 # Get notmuch tags (filter internal ones)
-                nm_tags = {
-                    t for t in nm_msg.tags if t not in self.SKIP_TAGS
-                }
+                nm_tags = {t for t in nm_msg.tags if t not in self.SKIP_TAGS}
 
                 if overwrite:
                     # Remove all existing tags
-                    for tag in list(email.tags):
-                        if tag.source == "notmuch":
-                            email.tags.remove(tag)
+                    for existing_tag in list(email.tags):
+                        if existing_tag.source == "notmuch":
+                            email.tags.remove(existing_tag)
                             result.tags_removed += 1
 
                 # Add notmuch tags
@@ -188,7 +179,7 @@ class NotmuchSync:
                     prefixed_name = f"{self.tag_prefix}{tag_name}"
 
                     # Find or create tag
-                    tag = self.session.execute(
+                    tag: Tag | None = self.session.execute(
                         select(Tag).where(Tag.name == prefixed_name)
                     ).scalar()
 
@@ -218,6 +209,7 @@ class NotmuchSync:
             NotmuchSyncResult with statistics.
         """
         from sqlalchemy import select
+
         from mtk.core.models import Email
 
         result = NotmuchSyncResult(operation="push")
@@ -252,7 +244,7 @@ class NotmuchSync:
                         tag_name = tag.name
                         # Remove prefix if it was added during pull
                         if self.tag_prefix and tag_name.startswith(self.tag_prefix):
-                            tag_name = tag_name[len(self.tag_prefix):]
+                            tag_name = tag_name[len(self.tag_prefix) :]
 
                         if tag_name not in current_tags and tag_name not in self.SKIP_TAGS:
                             nm_msg.tags.add(tag_name)
@@ -315,9 +307,10 @@ class NotmuchSync:
             NotmuchSyncResult with import statistics.
         """
         from sqlalchemy import select
+
         from mtk.core.models import Email, Tag
-        from mtk.people.resolver import PersonResolver
         from mtk.importers.parser import EmailParser
+        from mtk.people.resolver import PersonResolver
 
         result = NotmuchSyncResult(operation="import")
 
@@ -335,9 +328,7 @@ class NotmuchSync:
                 msg_id = nm_msg.messageid
 
                 # Skip if already in mtk
-                existing = self.session.query(Email).filter_by(
-                    message_id=msg_id
-                ).first()
+                existing = self.session.query(Email).filter_by(message_id=msg_id).first()
                 if existing:
                     continue
 
@@ -380,9 +371,7 @@ class NotmuchSync:
                         if tag_name in self.SKIP_TAGS:
                             continue
 
-                        tag = self.session.execute(
-                            select(Tag).where(Tag.name == tag_name)
-                        ).scalar()
+                        tag = self.session.execute(select(Tag).where(Tag.name == tag_name)).scalar()
 
                         if not tag:
                             tag = Tag(name=tag_name, source="notmuch")

@@ -1,13 +1,10 @@
 """Tests for people and relationship modules."""
 
-from datetime import datetime
-
-import pytest
 from sqlalchemy import select
 
-from mtk.core.models import Email, Person, PersonEmail
-from mtk.people.resolver import PersonResolver
+from mtk.core.models import Person, PersonEmail
 from mtk.people.relationships import RelationshipAnalyzer
+from mtk.people.resolver import PersonResolver
 
 
 class TestPersonResolver:

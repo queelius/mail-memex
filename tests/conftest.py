@@ -9,10 +9,11 @@ This module provides:
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,15 +24,12 @@ from mtk.core.models import (
     Annotation,
     Attachment,
     Collection,
-    CustomField,
     Email,
     Person,
     PersonEmail,
-    PrivacyRule,
     Tag,
     Thread,
 )
-
 
 # =============================================================================
 # Directory and Path Fixtures
@@ -98,10 +96,8 @@ def session(db: Database) -> Iterator[Session]:
     finally:
         # Always rollback any pending transaction before closing
         # This handles tests that intentionally cause IntegrityError
-        try:
+        with contextlib.suppress(Exception):
             sess.rollback()
-        except Exception:
-            pass
         sess.close()
 
 
@@ -356,7 +352,7 @@ def sample_eml_dir(tmp_dir: Path) -> Path:
         content = f"""From: sender{i}@example.com
 To: recipient{i}@example.com
 Subject: Email number {i}
-Date: Mon, {15+i} Jan 2024 10:00:00 -0500
+Date: Mon, {15 + i} Jan 2024 10:00:00 -0500
 Message-ID: <eml{i}@example.com>
 
 Body of email number {i}.
@@ -560,7 +556,7 @@ def populated_db(db: Database) -> Database:
 @pytest.fixture
 def mock_config(tmp_dir: Path):
     """Mock MtkConfig to use temporary directories."""
-    with patch("mtk.core.config.MtkConfig") as MockConfig:
+    with patch("mtk.core.config.MtkConfig") as mock_config_cls:
         config = MagicMock()
         config.default_config_dir.return_value = tmp_dir / ".config" / "mtk"
         config.default_data_dir.return_value = tmp_dir / ".local" / "share" / "mtk"
@@ -569,8 +565,8 @@ def mock_config(tmp_dir: Path):
         config.auto_sync = True
         config.generate_embeddings = False
         config.generate_summaries = False
-        MockConfig.load.return_value = config
-        MockConfig.return_value = config
+        mock_config_cls.load.return_value = config
+        mock_config_cls.return_value = config
         yield config
 
 
@@ -594,11 +590,13 @@ def mock_notmuch():
     mock_db.__enter__ = MagicMock(return_value=mock_db)
     mock_db.__exit__ = MagicMock(return_value=False)
 
-    with patch.dict("sys.modules", {"notmuch2": MagicMock()}):
-        with patch("mtk.notmuch.wrapper.NOTMUCH_AVAILABLE", True):
-            with patch("mtk.notmuch.wrapper.notmuch2") as mock_notmuch2:
-                mock_notmuch2.Database.return_value = mock_db
-                yield mock_notmuch2
+    with (
+        patch.dict("sys.modules", {"notmuch2": MagicMock()}),
+        patch("mtk.notmuch.wrapper.NOTMUCH_AVAILABLE", True),
+        patch("mtk.notmuch.wrapper.notmuch2") as mock_notmuch2,
+    ):
+        mock_notmuch2.Database.return_value = mock_db
+        yield mock_notmuch2
 
 
 # =============================================================================

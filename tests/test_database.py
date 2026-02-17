@@ -14,10 +14,19 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from mtk.core.database import Database, get_db, init_db, close_db
+from mtk.core.database import Database, close_db, get_db, init_db
 from mtk.core.models import (
-    Email, Person, PersonEmail, Thread, Tag, Attachment,
-    Annotation, Collection, CustomField, PrivacyRule, TopicCluster
+    Annotation,
+    Attachment,
+    Collection,
+    CustomField,
+    Email,
+    Person,
+    PersonEmail,
+    PrivacyRule,
+    Tag,
+    Thread,
+    TopicCluster,
 )
 
 
@@ -508,9 +517,11 @@ class TestAttachmentModel:
         session.commit()
 
         # Attachment should also be gone
-        result = session.execute(
-            select(Attachment).where(Attachment.email_id == email_id)
-        ).scalars().all()
+        result = (
+            session.execute(select(Attachment).where(Attachment.email_id == email_id))
+            .scalars()
+            .all()
+        )
         assert len(result) == 0
 
 
@@ -535,9 +546,7 @@ class TestAnnotationModel:
         session.add(annotation)
         session.commit()
 
-        result = session.execute(
-            select(Annotation).where(Annotation.email_id == email.id)
-        ).scalar()
+        result = session.execute(select(Annotation).where(Annotation.email_id == email.id)).scalar()
         assert result.content == "Important context here"
         assert result.annotation_type == "note"
 
@@ -561,9 +570,11 @@ class TestAnnotationModel:
 
         session.commit()
 
-        result = session.execute(
-            select(Annotation).where(Annotation.email_id == email.id)
-        ).scalars().all()
+        result = (
+            session.execute(select(Annotation).where(Annotation.email_id == email.id))
+            .scalars()
+            .all()
+        )
         assert len(result) == 4
 
 

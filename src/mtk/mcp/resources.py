@@ -21,9 +21,7 @@ def read_email_resource(session: Session, email_id: str) -> str | None:
 
     URI: mtk://email/{message_id}
     """
-    email = session.execute(
-        select(Email).where(Email.message_id == email_id)
-    ).scalar()
+    email = session.execute(select(Email).where(Email.message_id == email_id)).scalar()
 
     if not email:
         email = session.execute(
@@ -116,9 +114,7 @@ def read_stats_resource(session: Session) -> str:
     tag_count = session.execute(select(func.count(Tag.id))).scalar() or 0
     attachment_count = session.execute(select(func.count(Attachment.id))).scalar() or 0
 
-    date_result = session.execute(
-        select(func.min(Email.date), func.max(Email.date))
-    ).one()
+    date_result = session.execute(select(func.min(Email.date), func.max(Email.date))).one()
 
     data = {
         "emails": email_count,

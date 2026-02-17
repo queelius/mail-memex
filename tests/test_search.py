@@ -2,9 +2,7 @@
 
 from datetime import datetime
 
-import pytest
-
-from mtk.search.engine import SearchEngine, SearchQuery
+from mtk.search.engine import SearchEngine
 
 
 class TestSearchQuery:
@@ -55,9 +53,7 @@ class TestSearchQuery:
     def test_parse_multiple_operators(self) -> None:
         """Test parsing multiple operators together."""
         engine = SearchEngine(None)
-        query = engine.parse_query(
-            "from:alice subject:meeting after:2024-01-01 project discussion"
-        )
+        query = engine.parse_query("from:alice subject:meeting after:2024-01-01 project discussion")
 
         assert query.from_addr == "alice"
         assert query.subject == "meeting"

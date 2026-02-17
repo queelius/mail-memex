@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from typing import Any
 
 from mtk.export.base import Exporter, ExportResult
 
@@ -16,11 +17,11 @@ class MarkdownExporter(Exporter):
 
     format_name = "markdown"
 
-    def __init__(self, *args, group_by_thread: bool = False, **kwargs) -> None:
+    def __init__(self, *args: Any, group_by_thread: bool = False, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.group_by_thread = group_by_thread
 
-    def export(self, emails: list) -> ExportResult:
+    def export(self, emails: list[Any]) -> ExportResult:
         """Export emails to Markdown files."""
         filtered_emails, privacy_report = self._apply_privacy(emails)
 
@@ -43,7 +44,7 @@ class MarkdownExporter(Exporter):
         return result
 
     def _export_individual(
-        self, emails: list[dict], result: ExportResult
+        self, emails: list[dict[str, Any]], result: ExportResult
     ) -> ExportResult:
         """Export each email as a separate file."""
         for email_data in emails:
@@ -62,13 +63,11 @@ class MarkdownExporter(Exporter):
 
         return result
 
-    def _export_by_thread(
-        self, emails: list[dict], result: ExportResult
-    ) -> ExportResult:
+    def _export_by_thread(self, emails: list[dict[str, Any]], result: ExportResult) -> ExportResult:
         """Export emails grouped by thread."""
         # Group by thread
-        threads: dict[str, list[dict]] = {}
-        no_thread: list[dict] = []
+        threads: dict[str, list[dict[str, Any]]] = {}
+        no_thread: list[dict[str, Any]] = []
 
         for email_data in emails:
             thread_id = email_data.get("thread_id")
@@ -83,9 +82,7 @@ class MarkdownExporter(Exporter):
         for thread_id, thread_emails in threads.items():
             try:
                 # Sort by date
-                thread_emails.sort(
-                    key=lambda e: e.get("date") or datetime.min
-                )
+                thread_emails.sort(key=lambda e: e.get("date") or datetime.min)
 
                 # Use first email's subject for filename
                 first = thread_emails[0]
@@ -117,7 +114,7 @@ class MarkdownExporter(Exporter):
 
         return result
 
-    def _generate_filename(self, email_data: dict) -> str:
+    def _generate_filename(self, email_data: dict[str, Any]) -> str:
         """Generate a filename for an email."""
         date = email_data.get("date")
         if isinstance(date, datetime):
@@ -140,7 +137,7 @@ class MarkdownExporter(Exporter):
         s = re.sub(r"_+", "_", s)
         return s.strip("_") or "untitled"
 
-    def _format_email(self, email_data: dict) -> str:
+    def _format_email(self, email_data: dict[str, Any]) -> str:
         """Format a single email as Markdown."""
         lines = []
 
@@ -152,7 +149,9 @@ class MarkdownExporter(Exporter):
         # Metadata
         lines.append("## Metadata")
         lines.append("")
-        lines.append(f"- **From:** {email_data.get('from_name', '')} <{email_data.get('from_addr', '')}>")
+        lines.append(
+            f"- **From:** {email_data.get('from_name', '')} <{email_data.get('from_addr', '')}>"
+        )
 
         date = email_data.get("date")
         if isinstance(date, datetime):
@@ -199,7 +198,7 @@ class MarkdownExporter(Exporter):
 
         return "\n".join(lines)
 
-    def _format_thread(self, emails: list[dict]) -> str:
+    def _format_thread(self, emails: list[dict[str, Any]]) -> str:
         """Format a thread as Markdown."""
         if not emails:
             return ""

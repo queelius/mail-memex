@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+from typing import Any
 
-def require_str(args: dict, key: str) -> str:
+
+def require_str(args: dict[str, Any], key: str) -> str:
     """Extract a required string argument."""
     value = args.get(key)
-    if not value or not isinstance(value, str):
+    if not isinstance(value, str) or not value:
         raise ValueError(f"Missing required argument: {key}")
     return value
 
 
-def optional_str(args: dict, key: str, default: str | None = None) -> str | None:
+def optional_str(args: dict[str, Any], key: str, default: str | None = None) -> str | None:
     """Extract an optional string argument."""
     value = args.get(key)
     if value is None:
@@ -19,7 +21,7 @@ def optional_str(args: dict, key: str, default: str | None = None) -> str | None
     return str(value)
 
 
-def optional_int(args: dict, key: str, default: int = 0) -> int:
+def optional_int(args: dict[str, Any], key: str, default: int = 0) -> int:
     """Extract an optional integer argument."""
     value = args.get(key)
     if value is None:
@@ -27,7 +29,7 @@ def optional_int(args: dict, key: str, default: int = 0) -> int:
     return int(value)
 
 
-def optional_bool(args: dict, key: str, default: bool = False) -> bool:
+def optional_bool(args: dict[str, Any], key: str, default: bool = False) -> bool:
     """Extract an optional boolean argument."""
     value = args.get(key)
     if value is None:
@@ -35,7 +37,7 @@ def optional_bool(args: dict, key: str, default: bool = False) -> bool:
     return bool(value)
 
 
-def optional_list(args: dict, key: str) -> list[str]:
+def optional_list(args: dict[str, Any], key: str) -> list[str]:
     """Extract an optional list-of-strings argument."""
     value = args.get(key)
     if value is None:

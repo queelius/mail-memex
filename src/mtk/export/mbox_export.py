@@ -6,6 +6,7 @@ import email.utils
 from datetime import datetime
 from email.message import EmailMessage
 from mailbox import mbox
+from typing import Any
 
 from mtk.export.base import Exporter, ExportResult
 
@@ -19,7 +20,7 @@ class MboxExporter(Exporter):
 
     format_name = "mbox"
 
-    def export(self, emails: list) -> ExportResult:
+    def export(self, emails: list[Any]) -> ExportResult:
         """Export emails to mbox file."""
         filtered_emails, privacy_report = self._apply_privacy(emails)
 
@@ -54,7 +55,7 @@ class MboxExporter(Exporter):
 
         return result
 
-    def _create_message(self, email_data: dict) -> EmailMessage:
+    def _create_message(self, email_data: dict[str, Any]) -> EmailMessage:
         """Create EmailMessage from email data."""
         msg = EmailMessage()
 

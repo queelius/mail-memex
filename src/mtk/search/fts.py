@@ -7,7 +7,7 @@ query preparation, and BM25-scored search with snippet extraction.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
 
@@ -83,10 +83,7 @@ def setup_fts5(engine: Engine) -> bool:
             # "no such function". Distinguish by trying to create a temp table.
             try:
                 conn.execute(
-                    text(
-                        "CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_check "
-                        "USING fts5(test_col)"
-                    )
+                    text("CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_check USING fts5(test_col)")
                 )
                 conn.execute(text("DROP TABLE IF EXISTS _fts5_check"))
             except Exception:
@@ -101,14 +98,10 @@ def setup_fts5(engine: Engine) -> bool:
         conn.execute(text(_CREATE_TRIGGER_DELETE))
 
         # Populate from existing emails if FTS table is empty
-        fts_count = conn.execute(
-            text("SELECT COUNT(*) FROM emails_fts")
-        ).scalar()
-        email_count = conn.execute(
-            text("SELECT COUNT(*) FROM emails")
-        ).scalar()
+        fts_count = conn.execute(text("SELECT COUNT(*) FROM emails_fts")).scalar()
+        email_count = conn.execute(text("SELECT COUNT(*) FROM emails")).scalar()
 
-        if fts_count == 0 and email_count > 0:
+        if fts_count == 0 and email_count is not None and email_count > 0:
             conn.execute(
                 text(
                     "INSERT INTO emails_fts(email_id, subject, body_text, from_addr, from_name) "
@@ -201,7 +194,7 @@ def fts5_search(
     *,
     limit: int = 50,
     offset: int = 0,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Execute an FTS5 search with BM25 ranking and snippet extraction.
 
     Args:
@@ -291,7 +284,7 @@ def rebuild_fts_index(engine: Engine) -> int:
     return count
 
 
-def fts_stats(engine: Engine) -> dict:
+def fts_stats(engine: Engine) -> dict[str, Any]:
     """Get FTS5 index statistics.
 
     Args:

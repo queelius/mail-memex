@@ -9,12 +9,11 @@ These tests define the expected behavior of the EmailParser class:
 - Generate Message-IDs when missing
 """
 
-from datetime import datetime
 from pathlib import Path
 
 import pytest
 
-from mtk.importers.parser import EmailParser, ParsedEmail, ParsedAttachment
+from mtk.importers.parser import EmailParser, ParsedEmail
 
 
 class TestEmailParserBasics:
@@ -436,12 +435,12 @@ class TestEncodingHandling:
     def test_utf8_subject(self) -> None:
         """Should handle UTF-8 encoded subject."""
         parser = EmailParser()
-        email = """From: test@example.com
+        email = b"""From: test@example.com
 Subject: =?UTF-8?Q?Caf=C3=A9_menu?=
 Message-ID: <test@example.com>
 
 Body.
-""".encode("utf-8")
+"""
         result = parser.parse_bytes(email)
 
         assert "Café" in result.subject
@@ -454,7 +453,7 @@ Message-ID: <test@example.com>
 Content-Type: text/plain; charset=utf-8
 
 Café résumé naïve.
-""".encode("utf-8")
+""".encode()
         result = parser.parse_bytes(email)
 
         assert "Café" in result.body_text

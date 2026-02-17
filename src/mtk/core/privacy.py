@@ -5,9 +5,10 @@ Implements exclusion rules and redaction patterns from privacy.yaml.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from mtk.core.models import Email
@@ -43,7 +44,7 @@ class PrivacyReport:
     redaction_patterns_applied: dict[str, int] = field(default_factory=dict)
 
 
-def _email_to_dict(email: Email) -> dict:
+def _email_to_dict(email: Email) -> dict[str, Any]:
     """Convert an Email ORM object to a plain dictionary.
 
     This is the canonical conversion used by privacy filtering and export.
@@ -60,9 +61,7 @@ def _email_to_dict(email: Email) -> dict:
         "body_html": email.body_html,
         "body_preview": email.body_preview,
         "thread_id": email.thread_id,
-        "tags": [t.name for t in email.tags]
-        if hasattr(email, "tags") and email.tags
-        else [],
+        "tags": [t.name for t in email.tags] if hasattr(email, "tags") and email.tags else [],
         "attachments": [
             {
                 "filename": a.filename,
@@ -97,31 +96,23 @@ class PrivacyFilter:
 
     def __init__(self, config: PrivacyConfig) -> None:
         self.config = config
-        self._compiled_exclude_patterns: list[re.Pattern] = []
-        self._compiled_redact_patterns: list[tuple[re.Pattern, str]] = []
+        self._compiled_exclude_patterns: list[re.Pattern[str]] = []
+        self._compiled_redact_patterns: list[tuple[re.Pattern[str], str]] = []
         self._compile_patterns()
 
     def _compile_patterns(self) -> None:
         """Pre-compile regex patterns for performance."""
         # Exclusion patterns
         for pattern in self.config.exclude_patterns:
-            try:
-                self._compiled_exclude_patterns.append(
-                    re.compile(pattern, re.IGNORECASE)
-                )
-            except re.error:
-                pass  # Skip invalid patterns
+            with contextlib.suppress(re.error):
+                self._compiled_exclude_patterns.append(re.compile(pattern, re.IGNORECASE))
 
         # Redaction patterns
         for rule in self.config.redact_patterns:
             pattern = rule.get("pattern", "")
             replacement = rule.get("replacement", "[REDACTED]")
-            try:
-                self._compiled_redact_patterns.append(
-                    (re.compile(pattern), replacement)
-                )
-            except re.error:
-                pass  # Skip invalid patterns
+            with contextlib.suppress(re.error):
+                self._compiled_redact_patterns.append((re.compile(pattern), replacement))
 
     def should_exclude(self, email: Email) -> ExclusionResult:
         """Check if an email should be excluded from export.
@@ -136,17 +127,13 @@ class PrivacyFilter:
         if email.from_addr:
             for addr in self.config.exclude_addresses:
                 if addr.lower() in email.from_addr.lower():
-                    return ExclusionResult(
-                        excluded=True, reason=f"address:{addr}"
-                    )
+                    return ExclusionResult(excluded=True, reason=f"address:{addr}")
 
         # Check tags
         if hasattr(email, "tags") and email.tags:
             for tag in email.tags:
                 if tag.name in self.config.exclude_tags:
-                    return ExclusionResult(
-                        excluded=True, reason=f"tag:{tag.name}"
-                    )
+                    return ExclusionResult(excluded=True, reason=f"tag:{tag.name}")
 
         # Check content patterns
         content = f"{email.subject or ''} {email.body_text or ''}"
@@ -179,11 +166,9 @@ class PrivacyFilter:
             total_count += count
             result = new_result
 
-        return RedactionResult(
-            original=text, redacted=result, redaction_count=total_count
-        )
+        return RedactionResult(original=text, redacted=result, redaction_count=total_count)
 
-    def redact_email(self, email: Email) -> dict:
+    def redact_email(self, email: Email) -> dict[str, Any]:
         """Create a redacted copy of email data.
 
         Args:
@@ -244,15 +229,14 @@ class PrivacyFilter:
                 )
                 if matches > 0:
                     report.redaction_patterns_applied[pattern_str] = (
-                        report.redaction_patterns_applied.get(pattern_str, 0)
-                        + matches
+                        report.redaction_patterns_applied.get(pattern_str, 0) + matches
                     )
 
         return report
 
     def filter_emails(
         self, emails: list[Email], apply_redaction: bool = True
-    ) -> tuple[list[dict], PrivacyReport]:
+    ) -> tuple[list[dict[str, Any]], PrivacyReport]:
         """Filter and optionally redact a list of emails.
 
         Args:

@@ -153,15 +153,17 @@ class PersonResolver:
             not keep.first_contact or merge.first_contact < keep.first_contact
         ):
             keep.first_contact = merge.first_contact
-        if merge.last_contact and (
-            not keep.last_contact or merge.last_contact > keep.last_contact
-        ):
+        if merge.last_contact and (not keep.last_contact or merge.last_contact > keep.last_contact):
             keep.last_contact = merge.last_contact
 
         # Keep the better name (longer, not email-based)
-        if merge.name and len(merge.name) > len(keep.name or ""):
-            if "@" not in merge.name and "@" in (keep.name or ""):
-                keep.name = merge.name
+        if (
+            merge.name
+            and len(merge.name) > len(keep.name or "")
+            and "@" not in merge.name
+            and "@" in (keep.name or "")
+        ):
+            keep.name = merge.name
 
         # Merge notes
         if merge.notes:
@@ -189,9 +191,7 @@ class PersonResolver:
         candidates = []
 
         # Get all persons with their emails
-        persons = self.session.execute(
-            select(Person).where(Person.email_count > 0)
-        ).scalars().all()
+        persons = self.session.execute(select(Person).where(Person.email_count > 0)).scalars().all()
 
         person_emails: dict[int, list[str]] = defaultdict(list)
         for person in persons:

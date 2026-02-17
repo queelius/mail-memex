@@ -90,9 +90,7 @@ class Email(Base):
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        default=datetime.utcnow, onupdate=datetime.utcnow
-    )
+    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
     thread: Mapped[Thread | None] = relationship(back_populates="emails")
@@ -131,9 +129,7 @@ class Person(Base):
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        default=datetime.utcnow, onupdate=datetime.utcnow
-    )
+    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
     email_addresses: Mapped[list[PersonEmail]] = relationship(
@@ -183,9 +179,7 @@ class Thread(Base):
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        default=datetime.utcnow, onupdate=datetime.utcnow
-    )
+    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
     emails: Mapped[list[Email]] = relationship(back_populates="thread")
@@ -287,9 +281,7 @@ class Annotation(Base):
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        default=datetime.utcnow, onupdate=datetime.utcnow
-    )
+    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
 
     def __repr__(self) -> str:
         if self.email_id:
@@ -324,9 +316,7 @@ class Collection(Base):
     color: Mapped[str | None] = mapped_column(String(20))  # For UI display
     icon: Mapped[str | None] = mapped_column(String(50))
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        default=datetime.utcnow, onupdate=datetime.utcnow
-    )
+    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
     emails: Mapped[list[Email]] = relationship(secondary=collection_emails)
@@ -413,9 +403,7 @@ class ImapSyncState(Base):
     message_count: Mapped[int] = mapped_column(default=0)
     last_sync: Mapped[datetime | None] = mapped_column()
 
-    __table_args__ = (
-        UniqueConstraint("account_name", "folder"),
-    )
+    __table_args__ = (UniqueConstraint("account_name", "folder"),)
 
     def __repr__(self) -> str:
         return f"<ImapSyncState {self.account_name}/{self.folder} uid={self.last_uid}>"

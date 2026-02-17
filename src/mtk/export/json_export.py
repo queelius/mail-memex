@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from typing import Any
 
 from mtk.export.base import Exporter, ExportResult
 
@@ -16,11 +17,11 @@ class JsonExporter(Exporter):
 
     format_name = "json"
 
-    def __init__(self, *args, pretty: bool = True, **kwargs) -> None:
+    def __init__(self, *args: Any, pretty: bool = True, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.pretty = pretty
 
-    def export(self, emails: list) -> ExportResult:
+    def export(self, emails: list[Any]) -> ExportResult:
         """Export emails to JSON file."""
         filtered_emails, privacy_report = self._apply_privacy(emails)
 
@@ -33,10 +34,11 @@ class JsonExporter(Exporter):
         )
 
         # Build export data
-        export_data = {
+        emails_list: list[dict[str, Any]] = []
+        export_data: dict[str, Any] = {
             "exported_at": datetime.now().isoformat(),
             "total_emails": len(filtered_emails),
-            "emails": [],
+            "emails": emails_list,
         }
 
         for email_data in filtered_emails:
@@ -45,7 +47,7 @@ class JsonExporter(Exporter):
             if isinstance(date, datetime):
                 email_data["date"] = date.isoformat()
 
-            export_data["emails"].append(email_data)
+            emails_list.append(email_data)
 
         # Write to file
         try:

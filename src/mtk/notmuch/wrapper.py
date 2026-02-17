@@ -6,10 +6,10 @@ while isolating the dependency to allow testing without notmuch.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterator
 
 # Try to import notmuch2, but allow graceful fallback
 try:
@@ -93,8 +93,7 @@ class NotmuchWrapper:
         """
         if not NOTMUCH_AVAILABLE:
             raise NotmuchError(
-                "notmuch2 Python bindings not available. "
-                "Install with: pip install notmuch2"
+                "notmuch2 Python bindings not available. Install with: pip install notmuch2"
             )
 
         self.db_path = Path(db_path) if db_path else None
@@ -127,13 +126,11 @@ class NotmuchWrapper:
         """
         with self._get_db() as db:
             messages = db.messages(query)
-            count = 0
-            for msg in messages:
+            for count, msg in enumerate(messages):
                 if limit and count >= limit:
                     break
 
                 yield self._convert_message(msg)
-                count += 1
 
     def search_threads(
         self,
@@ -152,13 +149,11 @@ class NotmuchWrapper:
         """
         with self._get_db() as db:
             threads = db.threads(query)
-            count = 0
-            for thread in threads:
+            for count, thread in enumerate(threads):
                 if limit and count >= limit:
                     break
 
                 yield self._convert_thread(thread)
-                count += 1
 
     def get_message(self, message_id: str) -> NotmuchMessage | None:
         """Get a specific message by Message-ID.
@@ -257,7 +252,7 @@ class NotmuchWrapper:
             Number of matching messages.
         """
         with self._get_db() as db:
-            return db.count_messages(query)
+            return int(db.count_messages(query))
 
     def _convert_message(self, msg) -> NotmuchMessage:  # type: ignore[no-untyped-def]
         """Convert a notmuch message to our dataclass."""

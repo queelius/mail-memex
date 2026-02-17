@@ -226,9 +226,7 @@ class SearchEngine:
             return self._like_search(query, limit, offset, "date")
 
         # Get FTS5 results (may return more than needed since we filter after)
-        fts_results = fts5_search(
-            self.session, fts_query, limit=limit * 3, offset=0
-        )
+        fts_results = fts5_search(self.session, fts_query, limit=limit * 3, offset=0)
         if not fts_results:
             # FTS5 query failed or no results — fall back to LIKE
             return self._like_search(query, limit, offset, "relevance")
@@ -420,13 +418,13 @@ class SearchEngine:
             return []
 
         try:
-            from sentence_transformers import SentenceTransformer
             import numpy as np
-        except ImportError:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as err:
             raise ImportError(
                 "Semantic search requires sentence-transformers. "
                 "Install with: pip install mtk[semantic]"
-            )
+            ) from err
 
         # Get or load embedding model
         if self._embedding_model is None:
@@ -516,13 +514,13 @@ class SearchEngine:
             Number of emails processed.
         """
         try:
-            from sentence_transformers import SentenceTransformer
             import numpy as np
-        except ImportError:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as err:
             raise ImportError(
                 "Embedding generation requires sentence-transformers. "
                 "Install with: pip install mtk[semantic]"
-            )
+            ) from err
 
         model = SentenceTransformer(model_name)
         processed = 0
@@ -545,7 +543,7 @@ class SearchEngine:
             embeddings = model.encode(texts)
 
             # Store embeddings
-            for email, embedding in zip(batch, embeddings):
+            for email, embedding in zip(batch, embeddings, strict=False):
                 email.embedding = embedding.astype(np.float32).tobytes()
 
             self.session.commit()

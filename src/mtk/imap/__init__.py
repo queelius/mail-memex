@@ -9,12 +9,14 @@ Usage:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from mtk.imap.account import ImapAccountConfig
+    from mtk.imap.pull import PullResult
+    from mtk.imap.push import PushResult
 
 
 @dataclass
@@ -22,11 +24,11 @@ class SyncResult:
     """Combined result of pull + push sync."""
 
     account: str = ""
-    pull_results: list = field(default_factory=list)
-    push_result: dict | None = None
+    pull_results: list[PullResult] = field(default_factory=list)
+    push_result: dict[str, Any] | None = None
     errors: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "account": self.account,
             "pull_results": [r.to_dict() for r in self.pull_results],
@@ -65,7 +67,7 @@ class ImapSync:
 
         return result
 
-    def pull_only(self) -> list:
+    def pull_only(self) -> list[PullResult]:
         """Pull new messages from all configured folders."""
         from mtk.imap.connection import ImapConnection
         from mtk.imap.mapping import TagMapper
@@ -82,7 +84,7 @@ class ImapSync:
 
         return results
 
-    def push_only(self):
+    def push_only(self) -> PushResult:
         """Push pending tag changes to IMAP server."""
         from mtk.imap.connection import ImapConnection
         from mtk.imap.mapping import TagMapper
@@ -90,11 +92,15 @@ class ImapSync:
 
         tag_mapper = TagMapper(is_gmail=self.account.provider == "gmail")
         push_sync = PushSync(self.session, self.account, tag_mapper)
+        result: PushResult | None = None
 
         with ImapConnection(self.account, self.password) as client:
-            return push_sync.push(client)
+            result = push_sync.push(client)
 
-    def status(self) -> dict:
+        assert result is not None
+        return result
+
+    def status(self) -> dict[str, Any]:
         """Get sync status for all folders."""
         from sqlalchemy import select
 

@@ -13,7 +13,7 @@ import email.utils
 import hashlib
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from email.message import EmailMessage
 from pathlib import Path
 from typing import BinaryIO
@@ -216,10 +216,10 @@ class EmailParser:
             return "", None
 
         # Use email.utils for robust parsing
-        name, addr = email.utils.parseaddr(header)
+        name_str, addr = email.utils.parseaddr(header)
         addr = addr.lower() if addr else ""
-        name = name.strip() if name else None
-        return addr, name
+        name_out: str | None = name_str.strip() if name_str else None
+        return addr, name_out
 
     def _parse_address_list(self, header: str) -> tuple[list[str], list[str | None]]:
         """Parse an address list header into ([emails], [names])."""
@@ -337,10 +337,13 @@ class EmailParser:
 
             # Get content size
             try:
-                content = part.get_payload(decode=True)
-                size = len(content) if content else 0
+                raw_content = part.get_payload(decode=True)
+                content_bytes: bytes | None = (
+                    raw_content if isinstance(raw_content, bytes) else None
+                )
+                size = len(content_bytes) if content_bytes else 0
                 # Generate content hash for deduplication
-                content_hash = hashlib.sha256(content).hexdigest() if content else None
+                content_hash = hashlib.sha256(content_bytes).hexdigest() if content_bytes else None
             except Exception:
                 size = 0
                 content_hash = None

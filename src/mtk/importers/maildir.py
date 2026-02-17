@@ -11,8 +11,8 @@ in a separate file. The directory structure is:
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 from mtk.importers.base import BaseImporter
 from mtk.importers.parser import EmailParser, ParsedEmail
@@ -40,8 +40,7 @@ class MaildirImporter(BaseImporter):
         # Validate it looks like a Maildir
         if not self._is_maildir(self.source_path):
             raise ValueError(
-                f"Not a valid Maildir: {self.source_path} "
-                "(missing cur, new, or tmp directories)"
+                f"Not a valid Maildir: {self.source_path} (missing cur, new, or tmp directories)"
             )
 
     @property
@@ -60,9 +59,8 @@ class MaildirImporter(BaseImporter):
         if self.include_subfolders:
             # Look for .folder subdirectories (standard Maildir++ format)
             for item in self.source_path.iterdir():
-                if item.name.startswith(".") and item.is_dir():
-                    if self._is_maildir(item):
-                        yield item
+                if item.name.startswith(".") and item.is_dir() and self._is_maildir(item):
+                    yield item
 
     def discover(self) -> Iterator[Path]:
         """Discover all email files in the Maildir.

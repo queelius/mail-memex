@@ -65,7 +65,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search query"},
-                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20},
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results (default 20)",
+                    "default": 20,
+                },
             },
             "required": ["query"],
         },
@@ -76,7 +80,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20},
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results (default 20)",
+                    "default": 20,
+                },
                 "since": {"type": "string", "description": "Show emails since date (YYYY-MM-DD)"},
             },
         },
@@ -172,7 +180,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20},
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results (default 20)",
+                    "default": 20,
+                },
             },
         },
     },

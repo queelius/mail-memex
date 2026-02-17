@@ -60,10 +60,14 @@ def _email_full_dict(email: Email) -> dict:
     data["body_text"] = email.body_text
     data["in_reply_to"] = email.in_reply_to
     data["references"] = email.references
-    data["attachments"] = [
-        {"filename": a.filename, "type": a.content_type, "size": a.size}
-        for a in email.attachments
-    ] if email.attachments else []
+    data["attachments"] = (
+        [
+            {"filename": a.filename, "type": a.content_type, "size": a.size}
+            for a in email.attachments
+        ]
+        if email.attachments
+        else []
+    )
     return data
 
 
@@ -121,9 +125,7 @@ def get_stats(session: Session, arguments: dict) -> list[dict]:
     tag_count = session.execute(select(func.count(Tag.id))).scalar() or 0
     attachment_count = session.execute(select(func.count(Att.id))).scalar() or 0
 
-    date_result = session.execute(
-        select(func.min(Email.date), func.max(Email.date))
-    ).one()
+    date_result = session.execute(select(func.min(Email.date), func.max(Email.date))).one()
 
     data = {
         "emails": email_count,
@@ -141,9 +143,7 @@ def show_email(session: Session, arguments: dict) -> list[dict]:
     """Show a single email by message_id."""
     message_id = require_str(arguments, "message_id")
 
-    email = session.execute(
-        select(Email).where(Email.message_id == message_id)
-    ).scalar()
+    email = session.execute(select(Email).where(Email.message_id == message_id)).scalar()
 
     if not email:
         email = session.execute(
@@ -168,9 +168,7 @@ def show_thread(session: Session, arguments: dict) -> list[dict]:
     )
 
     if not emails:
-        email = session.execute(
-            select(Email).where(Email.message_id == thread_id)
-        ).scalar()
+        email = session.execute(select(Email).where(Email.message_id == thread_id)).scalar()
         if email and email.thread_id:
             emails = list(
                 session.execute(
@@ -245,9 +243,7 @@ def tag_email(session: Session, arguments: dict) -> list[dict]:
     add_tags = optional_list(arguments, "add")
     remove_tags = optional_list(arguments, "remove")
 
-    email = session.execute(
-        select(Email).where(Email.message_id.contains(message_id))
-    ).scalar()
+    email = session.execute(select(Email).where(Email.message_id.contains(message_id))).scalar()
 
     if not email:
         return [_text(f"Email not found: {message_id}")]
@@ -268,10 +264,14 @@ def tag_email(session: Session, arguments: dict) -> list[dict]:
 
     session.commit()
 
-    return [_json_text({
-        "message_id": email.message_id,
-        "tags": [t.name for t in email.tags],
-    })]
+    return [
+        _json_text(
+            {
+                "message_id": email.message_id,
+                "tags": [t.name for t in email.tags],
+            }
+        )
+    ]
 
 
 def tag_batch(session: Session, arguments: dict) -> list[dict]:
@@ -312,12 +312,16 @@ def tag_batch(session: Session, arguments: dict) -> list[dict]:
 
     session.commit()
 
-    return [_json_text({
-        "matched": len(results),
-        "modified": modified,
-        "add_tags": add_tags,
-        "remove_tags": remove_tags,
-    })]
+    return [
+        _json_text(
+            {
+                "matched": len(results),
+                "modified": modified,
+                "add_tags": add_tags,
+                "remove_tags": remove_tags,
+            }
+        )
+    ]
 
 
 def list_tags(session: Session, arguments: dict) -> list[dict]:

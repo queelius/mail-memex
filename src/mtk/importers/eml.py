@@ -6,8 +6,8 @@ for email exports and as attachments.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 from mtk.importers.base import BaseImporter
 from mtk.importers.parser import EmailParser, ParsedEmail
@@ -103,8 +103,7 @@ class GmailTakeoutImporter(BaseImporter):
             if not mail_dir.exists():
                 mail_dir = self.source_path
 
-            for mbox_file in mail_dir.glob("**/*.mbox"):
-                yield mbox_file
+            yield from mail_dir.glob("**/*.mbox")
 
     def discover(self) -> Iterator[Path]:
         """Discover all email messages in the Takeout.
@@ -134,7 +133,7 @@ class GmailTakeoutImporter(BaseImporter):
 
         mbox = mailbox.mbox(file_path)
         try:
-            msg = mbox[index]
+            msg = mbox[index]  # type: ignore[index]
             if msg is None:
                 raise ValueError(f"Message {index} not found")
 

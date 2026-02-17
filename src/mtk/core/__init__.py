@@ -1,5 +1,6 @@
 """Core data models and database functionality."""
 
+from mtk.core.database import Database, close_db, get_db, init_db
 from mtk.core.models import (
     Annotation,
     Attachment,
@@ -14,7 +15,6 @@ from mtk.core.models import (
     Thread,
     TopicCluster,
 )
-from mtk.core.database import Database, get_db, init_db, close_db
 
 __all__ = [
     # Models

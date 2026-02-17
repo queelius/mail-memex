@@ -78,7 +78,7 @@ class Exporter(ABC):
 
     def _apply_privacy(
         self, emails: list[Email]
-    ) -> tuple[list[dict], PrivacyReport | None]:
+    ) -> tuple[list[dict[str, Any]], PrivacyReport | None]:
         """Apply privacy filtering if configured.
 
         Returns:

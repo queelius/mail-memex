@@ -413,9 +413,7 @@ class TestSearchEngineFts5Integration:
             assert len(results) >= 1
             # Should have some highlights
             r = results[0]
-            has_highlights = bool(r.highlights.get("subject")) or bool(
-                r.highlights.get("body")
-            )
+            has_highlights = bool(r.highlights.get("subject")) or bool(r.highlights.get("body"))
             assert has_highlights
 
     def test_search_with_field_filters(self, fts_populated_db: Database) -> None:

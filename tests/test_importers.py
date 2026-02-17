@@ -12,10 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from mtk.importers.base import BaseImporter, ImportStats
+from mtk.importers.base import ImportStats
+from mtk.importers.eml import EmlImporter, GmailTakeoutImporter
 from mtk.importers.maildir import MaildirImporter
 from mtk.importers.mbox import MboxImporter
-from mtk.importers.eml import EmlImporter, GmailTakeoutImporter
 from mtk.importers.parser import ParsedEmail
 
 
@@ -400,11 +400,13 @@ This is a test email.
         # Create multiple EML files
         for i in range(3):
             eml = tmp_dir / f"email{i}.eml"
-            eml.write_bytes(f"""From: sender{i}@example.com
+            eml.write_bytes(
+                f"""From: sender{i}@example.com
 Message-ID: <email{i}@example.com>
 
 Body {i}.
-""".encode())
+""".encode()
+            )
 
         importer = EmlImporter(tmp_dir)
         results = list(importer.import_all())
@@ -418,8 +420,12 @@ Body {i}.
         subdir = tmp_dir / "subdir"
         subdir.mkdir()
 
-        (tmp_dir / "root.eml").write_bytes(b"From: root@example.com\nMessage-ID: <root@example.com>\n\nRoot.")
-        (subdir / "nested.eml").write_bytes(b"From: nested@example.com\nMessage-ID: <nested@example.com>\n\nNested.")
+        (tmp_dir / "root.eml").write_bytes(
+            b"From: root@example.com\nMessage-ID: <root@example.com>\n\nRoot."
+        )
+        (subdir / "nested.eml").write_bytes(
+            b"From: nested@example.com\nMessage-ID: <nested@example.com>\n\nNested."
+        )
 
         # With recursion
         importer = EmlImporter(tmp_dir, recursive=True)
@@ -544,7 +550,7 @@ class TestImportAllErrorHandling:
 
         # Count successes and failures
         successes = sum(1 for email, error in results if email is not None)
-        failures = sum(1 for email, error in results if error is not None)
+        _failures = sum(1 for email, error in results if error is not None)
 
         # At least 2 should succeed
         assert successes >= 2

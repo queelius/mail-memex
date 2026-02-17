@@ -98,7 +98,7 @@ class OllamaProvider:
         try:
             import httpx
         except ImportError:
-            raise ImportError("httpx package required. Install with: pip install httpx")
+            raise ImportError("httpx package required. Install with: pip install httpx") from None
 
         try:
             response = httpx.post(
@@ -114,12 +114,12 @@ class OllamaProvider:
                 timeout=self.timeout,
             )
             response.raise_for_status()
-            return response.json().get("response", "").strip()
+            return str(response.json().get("response", "")).strip()
 
-        except httpx.TimeoutException:
-            raise RuntimeError(f"Ollama request timed out after {self.timeout}s")
-        except httpx.HTTPError as e:
-            raise RuntimeError(f"Ollama request failed: {e}")
+        except httpx.TimeoutException as err:
+            raise RuntimeError(f"Ollama request timed out after {self.timeout}s") from err
+        except httpx.HTTPError as err:
+            raise RuntimeError(f"Ollama request failed: {err}") from err
 
     def list_models(self) -> list[str]:
         """List available models in Ollama.

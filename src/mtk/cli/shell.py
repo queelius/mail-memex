@@ -6,6 +6,7 @@ Provides a REPL interface for exploring and managing emails.
 from __future__ import annotations
 
 import cmd
+import contextlib
 import shlex
 from typing import TYPE_CHECKING
 
@@ -58,6 +59,7 @@ class MtkShell(cmd.Cmd):
     def do_inbox(self, arg: str) -> None:
         """Show recent emails. Usage: inbox [limit]"""
         from sqlalchemy import select
+
         from mtk.core.models import Email
 
         limit = 20
@@ -115,6 +117,7 @@ class MtkShell(cmd.Cmd):
     def do_thread(self, arg: str) -> None:
         """Show thread for current or specified email. Usage: thread [index|id]"""
         from sqlalchemy import select
+
         from mtk.core.models import Email
 
         email = self._get_email(arg) if arg else self.current_email
@@ -128,18 +131,16 @@ class MtkShell(cmd.Cmd):
             return
 
         with self.db.session() as session:
-            stmt = (
-                select(Email)
-                .where(Email.thread_id == email.thread_id)
-                .order_by(Email.date)
-            )
+            stmt = select(Email).where(Email.thread_id == email.thread_id).order_by(Email.date)
             thread_emails = list(session.execute(stmt).scalars())
 
-            console.print(Panel.fit(
-                f"[bold]Thread:[/bold] {email.subject or 'No subject'}\n"
-                f"[bold]Messages:[/bold] {len(thread_emails)}",
-                title="Thread"
-            ))
+            console.print(
+                Panel.fit(
+                    f"[bold]Thread:[/bold] {email.subject or 'No subject'}\n"
+                    f"[bold]Messages:[/bold] {len(thread_emails)}",
+                    title="Thread",
+                )
+            )
 
             for i, e in enumerate(thread_emails, 1):
                 marker = "→ " if e.message_id == email.message_id else "  "
@@ -182,6 +183,7 @@ class MtkShell(cmd.Cmd):
             return
 
         from sqlalchemy import select
+
         from mtk.core.models import Tag
 
         parts = shlex.split(arg)
@@ -191,6 +193,7 @@ class MtkShell(cmd.Cmd):
         with self.db.session() as session:
             # Re-attach email to session
             from mtk.core.models import Email
+
             email = session.execute(
                 select(Email).where(Email.message_id == self.current_email.message_id)
             ).scalar()
@@ -219,7 +222,8 @@ class MtkShell(cmd.Cmd):
 
     def do_tags(self, arg: str) -> None:
         """List all tags. Usage: tags"""
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
+
         from mtk.core.models import Tag, email_tags
 
         with self.db.session() as session:
@@ -249,7 +253,8 @@ class MtkShell(cmd.Cmd):
     def do_stats(self, arg: str) -> None:
         """Show archive statistics."""
         from sqlalchemy import func, select
-        from mtk.core.models import Email, Person, Thread, Tag
+
+        from mtk.core.models import Email, Person, Tag, Thread
 
         with self.db.session() as session:
             email_count = session.execute(select(func.count(Email.id))).scalar() or 0
@@ -257,15 +262,17 @@ class MtkShell(cmd.Cmd):
             thread_count = session.execute(select(func.count(Thread.id))).scalar() or 0
             tag_count = session.execute(select(func.count(Tag.id))).scalar() or 0
 
-            console.print(Panel.fit(
-                f"""[bold]Archive Statistics[/bold]
+            console.print(
+                Panel.fit(
+                    f"""[bold]Archive Statistics[/bold]
 
 📧 Emails:  {email_count:,}
 👥 People:  {person_count:,}
 💬 Threads: {thread_count:,}
 🏷️  Tags:    {tag_count:,}""",
-                title="mtk"
-            ))
+                    title="mtk",
+                )
+            )
 
     def do_people(self, arg: str) -> None:
         """List top correspondents. Usage: people [limit]"""
@@ -273,10 +280,8 @@ class MtkShell(cmd.Cmd):
 
         limit = 10
         if arg:
-            try:
+            with contextlib.suppress(ValueError):
                 limit = int(arg)
-            except ValueError:
-                pass
 
         with self.db.session() as session:
             analyzer = RelationshipAnalyzer(session)
@@ -306,7 +311,7 @@ class MtkShell(cmd.Cmd):
     do_exit = do_quit
     do_q = do_quit
 
-    def do_EOF(self, arg: str) -> bool:
+    def do_EOF(self, arg: str) -> bool:  # noqa: N802
         """Handle Ctrl+D."""
         console.print()
         return self.do_quit(arg)
@@ -316,6 +321,7 @@ class MtkShell(cmd.Cmd):
     def _get_email(self, arg: str) -> Email | None:
         """Get email by index or message ID."""
         from sqlalchemy import select
+
         from mtk.core.models import Email
 
         # Try as index
@@ -329,9 +335,7 @@ class MtkShell(cmd.Cmd):
 
         # Try as message ID
         with self.db.session() as session:
-            email = session.execute(
-                select(Email).where(Email.message_id.contains(arg))
-            ).scalar()
+            email = session.execute(select(Email).where(Email.message_id.contains(arg))).scalar()
 
             if email:
                 return email
@@ -339,9 +343,7 @@ class MtkShell(cmd.Cmd):
             console.print(f"[red]Email not found: {arg}[/red]")
             return None
 
-    def _display_list(
-        self, show_score: bool = False, scores: list[float] | None = None
-    ) -> None:
+    def _display_list(self, show_score: bool = False, scores: list[float] | None = None) -> None:
         """Display current email list."""
         table = Table(title=f"Emails ({len(self.current_list)})")
         table.add_column("#", style="dim", width=3)
@@ -359,7 +361,7 @@ class MtkShell(cmd.Cmd):
                 (email.subject or "(no subject)")[:50],
             ]
             if show_score and scores:
-                row.append(f"{scores[i-1]:.2f}")
+                row.append(f"{scores[i - 1]:.2f}")
             table.add_row(*row)
 
         console.print(table)
@@ -369,14 +371,16 @@ class MtkShell(cmd.Cmd):
         """Display a single email."""
         tags = [t.name for t in email.tags] if email.tags else []
 
-        console.print(Panel.fit(
-            f"""[bold]From:[/bold] {email.from_name or ''} <{email.from_addr}>
+        console.print(
+            Panel.fit(
+                f"""[bold]From:[/bold] {email.from_name or ""} <{email.from_addr}>
 [bold]Date:[/bold] {format_date(email.date)}
-[bold]Subject:[/bold] {email.subject or '(no subject)'}
-[bold]Thread:[/bold] {email.thread_id or 'N/A'}
-[bold]Tags:[/bold] {', '.join(tags) or '(none)'}""",
-            title="Email"
-        ))
+[bold]Subject:[/bold] {email.subject or "(no subject)"}
+[bold]Thread:[/bold] {email.thread_id or "N/A"}
+[bold]Tags:[/bold] {", ".join(tags) or "(none)"}""",
+                title="Email",
+            )
+        )
 
         console.print()
         console.print(email.body_text or "(no content)")

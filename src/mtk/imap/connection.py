@@ -5,9 +5,11 @@ from __future__ import annotations
 import contextlib
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from types import TracebackType
+
     from mtk.imap.account import ImapAccountConfig
 
 
@@ -42,10 +44,10 @@ class ImapConnection:
         self.password = password
         self.max_retries = max_retries
         self.retry_delay = retry_delay
-        self._client = None
+        self._client: Any = None
         self.capabilities = ServerCapabilities()
 
-    def __enter__(self):
+    def __enter__(self) -> Any:
         try:
             from imapclient import IMAPClient
         except ImportError:
@@ -78,12 +80,16 @@ class ImapConnection:
             f"Failed to connect to {self.account.host} after {self.max_retries} attempts: {last_error}"
         )
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         if self._client:
             with contextlib.suppress(Exception):
                 self._client.logout()
             self._client = None
-        return False
 
     def _detect_capabilities(self) -> None:
         """Detect server capabilities after login."""

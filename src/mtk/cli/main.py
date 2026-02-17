@@ -21,7 +21,6 @@ import json as json_lib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -77,9 +76,7 @@ def format_email_summary(email, show_body: bool = False) -> str:
 
 @app.callback()
 def main(
-    version: bool = typer.Option(
-        False, "--version", "-V", help="Show version and exit"
-    ),
+    version: bool = typer.Option(False, "--version", "-V", help="Show version and exit"),
 ) -> None:
     """mtk - Mail Toolkit for personal email archive management."""
     if version:
@@ -91,7 +88,9 @@ def main(
 @app.command()
 def inbox(
     limit: int = typer.Option(20, "--limit", "-n", help="Maximum emails to show"),
-    since: Optional[str] = typer.Option(None, "--since", "-s", help="Show emails since date (YYYY-MM-DD)"),
+    since: str | None = typer.Option(
+        None, "--since", "-s", help="Show emails since date (YYYY-MM-DD)"
+    ),
     unread: bool = typer.Option(False, "--unread", "-u", help="Show only unread/unprocessed"),
     json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
@@ -99,7 +98,8 @@ def inbox(
 
     Perfect for quick overview of what needs attention.
     """
-    from sqlalchemy import select, desc
+    from sqlalchemy import desc, select
+
     from mtk.core.models import Email
 
     db = get_db()
@@ -112,7 +112,7 @@ def inbox(
                 stmt = stmt.where(Email.date >= since_date)
             except ValueError:
                 console.print(f"[red]Invalid date format: {since}[/red]")
-                raise typer.Exit(1)
+                raise typer.Exit(1) from None
 
         emails = list(session.execute(stmt).scalars())
 
@@ -167,7 +167,8 @@ def show(
     Displays headers, body, and optionally thread context.
     """
     from sqlalchemy import select
-    from mtk.core.models import Email, Attachment
+
+    from mtk.core.models import Email
 
     db = get_db()
     with db.session() as session:
@@ -204,15 +205,17 @@ def show(
             return
 
         # Display email
-        console.print(Panel.fit(
-            f"""[bold]From:[/bold] {email.from_name or ''} <{email.from_addr}>
+        console.print(
+            Panel.fit(
+                f"""[bold]From:[/bold] {email.from_name or ""} <{email.from_addr}>
 [bold]Date:[/bold] {format_date(email.date)}
-[bold]Subject:[/bold] {email.subject or '(no subject)'}
+[bold]Subject:[/bold] {email.subject or "(no subject)"}
 [bold]Message-ID:[/bold] {email.message_id}
-[bold]Thread-ID:[/bold] {email.thread_id or 'N/A'}
-[bold]In-Reply-To:[/bold] {email.in_reply_to or 'N/A'}""",
-            title="Email Headers"
-        ))
+[bold]Thread-ID:[/bold] {email.thread_id or "N/A"}
+[bold]In-Reply-To:[/bold] {email.in_reply_to or "N/A"}""",
+                title="Email Headers",
+            )
+        )
 
         # Attachments
         if email.attachments:
@@ -252,7 +255,9 @@ def thread(
     Great for understanding the context of a conversation.
     """
     from sqlalchemy import select
-    from mtk.core.models import Email, Thread as ThreadModel
+
+    from mtk.core.models import Email
+    from mtk.core.models import Thread as ThreadModel
 
     db = get_db()
     with db.session() as session:
@@ -265,9 +270,7 @@ def thread(
             tid = thread_obj.thread_id
         else:
             # Try to find by message ID
-            email = session.execute(
-                select(Email).where(Email.message_id == thread_id)
-            ).scalar()
+            email = session.execute(select(Email).where(Email.message_id == thread_id)).scalar()
             if email and email.thread_id:
                 tid = email.thread_id
             else:
@@ -275,11 +278,7 @@ def thread(
                 raise typer.Exit(1)
 
         # Get all emails in thread
-        stmt = (
-            select(Email)
-            .where(Email.thread_id == tid)
-            .order_by(Email.date)
-        )
+        stmt = select(Email).where(Email.thread_id == tid).order_by(Email.date)
         emails = list(session.execute(stmt).scalars())
 
         if not emails:
@@ -306,12 +305,14 @@ def thread(
             return
 
         # Display thread
-        console.print(Panel.fit(
-            f"[bold]Thread:[/bold] {emails[0].subject or 'No subject'}\n"
-            f"[bold]Messages:[/bold] {len(emails)}\n"
-            f"[bold]Participants:[/bold] {', '.join(set(e.from_addr for e in emails))}",
-            title="Thread Summary"
-        ))
+        console.print(
+            Panel.fit(
+                f"[bold]Thread:[/bold] {emails[0].subject or 'No subject'}\n"
+                f"[bold]Messages:[/bold] {len(emails)}\n"
+                f"[bold]Participants:[/bold] {', '.join({e.from_addr for e in emails})}",
+                title="Thread Summary",
+            )
+        )
 
         for i, email in enumerate(emails, 1):
             console.print(f"\n[bold cyan]--- Message {i}/{len(emails)} ---[/bold cyan]")
@@ -325,7 +326,9 @@ def thread(
 @app.command()
 def reply(
     message_id: str = typer.Argument(..., help="Message ID to reply to"),
-    include_thread: bool = typer.Option(True, "--thread/--no-thread", help="Include thread context"),
+    include_thread: bool = typer.Option(
+        True, "--thread/--no-thread", help="Include thread context"
+    ),
     json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
     """Prepare context for composing a reply.
@@ -334,6 +337,7 @@ def reply(
     reply headers. Perfect for Claude Code to help draft responses.
     """
     from sqlalchemy import select
+
     from mtk.core.models import Email
 
     db = get_db()
@@ -375,7 +379,9 @@ def reply(
                 },
                 "suggested_headers": {
                     "to": email.from_addr,
-                    "subject": f"Re: {email.subject}" if email.subject and not email.subject.startswith("Re:") else email.subject,
+                    "subject": f"Re: {email.subject}"
+                    if email.subject and not email.subject.startswith("Re:")
+                    else email.subject,
                     "in_reply_to": email.message_id,
                     "references": f"{email.references or ''} {email.message_id}".strip(),
                 },
@@ -396,12 +402,14 @@ def reply(
         console.print("[bold blue]📧 REPLY CONTEXT[/bold blue]\n")
 
         # Original message
-        console.print(Panel.fit(
-            f"""[bold]Replying to:[/bold] {email.from_name or email.from_addr}
+        console.print(
+            Panel.fit(
+                f"""[bold]Replying to:[/bold] {email.from_name or email.from_addr}
 [bold]Original Subject:[/bold] {email.subject}
 [bold]Sent:[/bold] {format_date(email.date)}""",
-            title="Original Message"
-        ))
+                title="Original Message",
+            )
+        )
 
         console.print("\n[bold]Original Body:[/bold]")
         console.print(Panel(email.body_text or "(no content)", border_style="dim"))
@@ -429,15 +437,13 @@ def reply(
 # === Init Command ===
 @app.command()
 def init(
-    path: Optional[Path] = typer.Argument(
+    path: Path | None = typer.Argument(
         None, help="Path to email source (Maildir, mbox, or directory)"
     ),
-    db_path: Optional[Path] = typer.Option(
+    db_path: Path | None = typer.Option(
         None, "--db", "-d", help="Database path (default: ~/.local/share/mtk/mtk.db)"
     ),
-    force: bool = typer.Option(
-        False, "--force", "-f", help="Reinitialize if already exists"
-    ),
+    force: bool = typer.Option(False, "--force", "-f", help="Reinitialize if already exists"),
 ) -> None:
     """Initialize mtk database and optionally import emails."""
     config = MtkConfig.load()
@@ -476,6 +482,7 @@ def import_maildir(
 ) -> None:
     """Import emails from Maildir format."""
     from mtk.importers import MaildirImporter
+
     db = get_db()
     importer = MaildirImporter(path, include_subfolders=include_subfolders)
     _run_import_with_importer(importer, db, json_output=json)
@@ -488,6 +495,7 @@ def import_mbox(
 ) -> None:
     """Import emails from mbox format."""
     from mtk.importers import MboxImporter
+
     db = get_db()
     importer = MboxImporter(path)
     _run_import_with_importer(importer, db, json_output=json)
@@ -501,6 +509,7 @@ def import_eml(
 ) -> None:
     """Import emails from EML files."""
     from mtk.importers import EmlImporter
+
     db = get_db()
     importer = EmlImporter(path, recursive=recursive)
     _run_import_with_importer(importer, db, json_output=json)
@@ -513,6 +522,7 @@ def import_gmail(
 ) -> None:
     """Import emails from Gmail Takeout export."""
     from mtk.importers import GmailTakeoutImporter
+
     db = get_db()
     importer = GmailTakeoutImporter(path)
     _run_import_with_importer(importer, db, json_output=json)
@@ -520,10 +530,10 @@ def import_gmail(
 
 def _run_import(path: Path, db: Database) -> None:
     """Auto-detect format and import."""
-    from mtk.importers import MaildirImporter, MboxImporter, EmlImporter
+    from mtk.importers import EmlImporter, MaildirImporter, MboxImporter
 
     if path.is_file():
-        if path.suffix.lower() == ".mbox":
+        if path.suffix.lower() == ".mbox":  # noqa: SIM108
             importer = MboxImporter(path)
         else:
             importer = EmlImporter(path)
@@ -541,8 +551,9 @@ def _build_threads(session) -> int:
     Groups emails into threads based on In-Reply-To and References headers.
     Returns the number of threads created/updated.
     """
-    from mtk.core.models import Email, Thread
     from sqlalchemy import select
+
+    from mtk.core.models import Email, Thread
 
     threads_created = 0
     processed = True
@@ -552,16 +563,19 @@ def _build_threads(session) -> int:
         processed = False
 
         # Get emails without thread_id that have In-Reply-To
-        emails_needing_threads = session.execute(
-            select(Email).where(
-                Email.thread_id.is_(None),
-                Email.in_reply_to.isnot(None)
-            ).order_by(Email.date)  # Process oldest first
-        ).scalars().all()
+        emails_needing_threads = (
+            session.execute(
+                select(Email)
+                .where(Email.thread_id.is_(None), Email.in_reply_to.isnot(None))
+                .order_by(Email.date)  # Process oldest first
+            )
+            .scalars()
+            .all()
+        )
 
         for email in emails_needing_threads:
             # Find the parent email by In-Reply-To
-            parent_msg_id = email.in_reply_to.strip('<>') if email.in_reply_to else None
+            parent_msg_id = email.in_reply_to.strip("<>") if email.in_reply_to else None
             if not parent_msg_id:
                 continue
 
@@ -590,7 +604,9 @@ def _build_threads(session) -> int:
                     subject=parent.subject,
                     email_count=2,
                     first_date=parent.date,
-                    last_date=email.date if email.date and parent.date and email.date > parent.date else parent.date,
+                    last_date=email.date
+                    if email.date and parent.date and email.date > parent.date
+                    else parent.date,
                 )
                 session.add(thread)
                 parent.thread_id = thread_id
@@ -607,6 +623,7 @@ def _build_threads(session) -> int:
 @dataclass
 class ImportResult:
     """Result of an import operation."""
+
     imported: int = 0
     errors: int = 0
     threads: int = 0
@@ -615,7 +632,7 @@ class ImportResult:
 
 def _run_import_with_importer(importer, db: Database, json_output: bool = False) -> ImportResult:  # type: ignore
     """Run import with progress display."""
-    from mtk.core.models import Email, Attachment
+    from mtk.core.models import Attachment, Email
     from mtk.people.resolver import PersonResolver
 
     result = ImportResult(source=str(importer.source_path))
@@ -686,12 +703,17 @@ def _run_import_with_importer(importer, db: Database, json_output: bool = False)
             result.threads = _build_threads(session)
 
     if json_output:
-        print(json_lib.dumps({
-            "source": result.source,
-            "imported": result.imported,
-            "errors": result.errors,
-            "threads": result.threads,
-        }, indent=2))
+        print(
+            json_lib.dumps(
+                {
+                    "source": result.source,
+                    "imported": result.imported,
+                    "errors": result.errors,
+                    "threads": result.threads,
+                },
+                indent=2,
+            )
+        )
     else:
         console.print(f"[green]Imported {result.imported} emails[/green]")
         if result.threads:
@@ -840,16 +862,18 @@ def people_show(
             print(json_lib.dumps(data, indent=2))
             return
 
-        console.print(Panel.fit(
-            f"""[bold]Name:[/bold] {stats.person_name}
+        console.print(
+            Panel.fit(
+                f"""[bold]Name:[/bold] {stats.person_name}
 [bold]Email:[/bold] {stats.primary_email}
-[bold]Type:[/bold] {stats.relationship_type or 'Unknown'}
+[bold]Type:[/bold] {stats.relationship_type or "Unknown"}
 [bold]Total Emails:[/bold] {stats.total_emails}
 [bold]Threads:[/bold] {stats.thread_count}
 [bold]First Contact:[/bold] {format_date(stats.first_email)}
 [bold]Last Contact:[/bold] {format_date(stats.last_email)}""",
-            title="Person Details"
-        ))
+                title="Person Details",
+            )
+        )
 
 
 # === Graph Command ===
@@ -891,7 +915,8 @@ def graph(
 def stats(json: bool = typer.Option(False, "--json", "-j")) -> None:
     """Show archive statistics."""
     from sqlalchemy import func, select
-    from mtk.core.models import Email, Person, Thread, Tag, Attachment
+
+    from mtk.core.models import Attachment, Email, Person, Tag, Thread
 
     db = get_db()
     with db.session() as session:
@@ -901,9 +926,7 @@ def stats(json: bool = typer.Option(False, "--json", "-j")) -> None:
         tag_count = session.execute(select(func.count(Tag.id))).scalar() or 0
         attachment_count = session.execute(select(func.count(Attachment.id))).scalar() or 0
 
-        date_result = session.execute(
-            select(func.min(Email.date), func.max(Email.date))
-        ).one()
+        date_result = session.execute(select(func.min(Email.date), func.max(Email.date))).one()
 
     # FTS5 stats (outside session context — uses engine directly)
     from mtk.search import fts_stats as get_fts_stats
@@ -924,7 +947,9 @@ def stats(json: bool = typer.Option(False, "--json", "-j")) -> None:
         print(json_lib.dumps(data, indent=2))
         return
 
-    fts_status = "[green]Active[/green]" if fts_info["available"] else "[yellow]Unavailable[/yellow]"
+    fts_status = (
+        "[green]Active[/green]" if fts_info["available"] else "[yellow]Unavailable[/yellow]"
+    )
     fts_line = f"\nFTS5 Search: {fts_status}"
     if fts_info["available"]:
         fts_line += f" ({fts_info['indexed_count']:,} indexed)"
@@ -940,7 +965,7 @@ Threads:     {thread_count:,}
 Tags:        {tag_count:,}
 Attachments: {attachment_count:,}
 
-Date Range:  {date_result[0] or 'N/A'} to {date_result[1] or 'N/A'}
+Date Range:  {date_result[0] or "N/A"} to {date_result[1] or "N/A"}
 {fts_line}""",
         title="mtk",
     )
@@ -957,7 +982,7 @@ def rebuild_index(
     Recreates the search index from all emails in the database.
     Run this after bulk imports or if search results seem stale.
     """
-    from mtk.search import rebuild_fts_index, fts_stats
+    from mtk.search import fts_stats, rebuild_fts_index
 
     db = get_db()
     db.create_tables()
@@ -966,11 +991,16 @@ def rebuild_index(
     stats_data = fts_stats(db.engine)
 
     if json:
-        print(json_lib.dumps({
-            "indexed": count,
-            "fts5_available": stats_data["available"],
-            "in_sync": stats_data["in_sync"],
-        }, indent=2))
+        print(
+            json_lib.dumps(
+                {
+                    "indexed": count,
+                    "fts5_available": stats_data["available"],
+                    "in_sync": stats_data["in_sync"],
+                },
+                indent=2,
+            )
+        )
     else:
         console.print(f"[green]Rebuilt FTS5 index: {count} emails indexed[/green]")
         if stats_data["in_sync"]:
@@ -1025,19 +1055,18 @@ def embeddings(
 @app.command()
 def tag(
     message_id: str = typer.Argument(..., help="Message ID"),
-    add: Optional[list[str]] = typer.Option(None, "--add", "-a", help="Tags to add"),
-    remove: Optional[list[str]] = typer.Option(None, "--remove", "-r", help="Tags to remove"),
+    add: list[str] | None = typer.Option(None, "--add", "-a", help="Tags to add"),
+    remove: list[str] | None = typer.Option(None, "--remove", "-r", help="Tags to remove"),
     json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
     """Add or remove tags from an email."""
     from sqlalchemy import select
+
     from mtk.core.models import Email, Tag
 
     db = get_db()
     with db.session() as session:
-        email = session.execute(
-            select(Email).where(Email.message_id.contains(message_id))
-        ).scalar()
+        email = session.execute(select(Email).where(Email.message_id.contains(message_id))).scalar()
 
         if not email:
             if json:
@@ -1048,9 +1077,7 @@ def tag(
 
         if add:
             for tag_name in add:
-                existing_tag = session.execute(
-                    select(Tag).where(Tag.name == tag_name)
-                ).scalar()
+                existing_tag = session.execute(select(Tag).where(Tag.name == tag_name)).scalar()
                 if not existing_tag:
                     existing_tag = Tag(name=tag_name, source="mtk")
                     session.add(existing_tag)
@@ -1061,9 +1088,7 @@ def tag(
 
         if remove:
             for tag_name in remove:
-                existing_tag = session.execute(
-                    select(Tag).where(Tag.name == tag_name)
-                ).scalar()
+                existing_tag = session.execute(select(Tag).where(Tag.name == tag_name)).scalar()
                 if existing_tag and existing_tag in email.tags:
                     email.tags.remove(existing_tag)
             if not json:
@@ -1073,19 +1098,24 @@ def tag(
         if email.imap_account:
             from mtk.imap.push import queue_tag_change
 
-            for tag_name in (add or []):
+            for tag_name in add or []:
                 queue_tag_change(session, email.id, email.imap_account, "add", tag_name)
-            for tag_name in (remove or []):
+            for tag_name in remove or []:
                 queue_tag_change(session, email.id, email.imap_account, "remove", tag_name)
 
         session.commit()
 
         current_tags = [t.name for t in email.tags]
         if json:
-            print(json_lib.dumps({
-                "message_id": email.message_id,
-                "tags": current_tags,
-            }, indent=2))
+            print(
+                json_lib.dumps(
+                    {
+                        "message_id": email.message_id,
+                        "tags": current_tags,
+                    },
+                    indent=2,
+                )
+            )
         else:
             console.print(f"Current tags: {', '.join(current_tags) or '(none)'}")
 
@@ -1097,7 +1127,7 @@ app.add_typer(privacy_app, name="privacy")
 
 @privacy_app.command("check")
 def privacy_check(
-    query: Optional[str] = typer.Argument(None, help="Search query to filter emails"),
+    query: str | None = typer.Argument(None, help="Search query to filter emails"),
     json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
     """Preview what privacy rules would exclude or redact.
@@ -1105,8 +1135,9 @@ def privacy_check(
     Shows statistics about what would be filtered without making changes.
     """
     from sqlalchemy import select
-    from mtk.core.models import Email
+
     from mtk.core.config import PrivacyConfig
+    from mtk.core.models import Email
     from mtk.core.privacy import PrivacyFilter
     from mtk.search import SearchEngine
 
@@ -1125,22 +1156,29 @@ def privacy_check(
         report = pfilter.preview(emails)
 
     if json:
-        print(json_lib.dumps({
-            "total_emails": report.total_emails,
-            "excluded": report.excluded_count,
-            "redacted": report.redacted_count,
-            "exclusion_reasons": report.exclusion_reasons,
-            "redaction_patterns": report.redaction_patterns_applied,
-        }, indent=2))
+        print(
+            json_lib.dumps(
+                {
+                    "total_emails": report.total_emails,
+                    "excluded": report.excluded_count,
+                    "redacted": report.redacted_count,
+                    "exclusion_reasons": report.exclusion_reasons,
+                    "redaction_patterns": report.redaction_patterns_applied,
+                },
+                indent=2,
+            )
+        )
     else:
-        console.print(Panel.fit(
-            f"""[bold]Privacy Filter Preview[/bold]
+        console.print(
+            Panel.fit(
+                f"""[bold]Privacy Filter Preview[/bold]
 
 Total emails checked: {report.total_emails}
 Would exclude: {report.excluded_count}
 Would redact: {report.redacted_count}""",
-            title="Privacy Check"
-        ))
+                title="Privacy Check",
+            )
+        )
 
         if report.exclusion_reasons:
             console.print("\n[bold]Exclusion reasons:[/bold]")
@@ -1158,9 +1196,7 @@ export_app = typer.Typer(help="Export emails to various formats")
 app.add_typer(export_app, name="export")
 
 
-def _prepare_export(
-    session, query: str | None, apply_privacy: bool
-) -> tuple[list, "PrivacyFilter | None"]:
+def _prepare_export(session, query: str | None, apply_privacy: bool) -> tuple[list, object]:
     """Shared setup for export commands: build privacy filter and fetch emails.
 
     Args:
@@ -1172,8 +1208,9 @@ def _prepare_export(
         Tuple of (emails list, privacy filter or None).
     """
     from sqlalchemy import select
-    from mtk.core.models import Email
+
     from mtk.core.config import PrivacyConfig
+    from mtk.core.models import Email
     from mtk.core.privacy import PrivacyFilter
     from mtk.search import SearchEngine
 
@@ -1195,7 +1232,7 @@ def _prepare_export(
 @export_app.command("json")
 def export_json(
     output: Path = typer.Argument(..., help="Output file path"),
-    query: Optional[str] = typer.Option(None, "--query", "-q", help="Search query to filter"),
+    query: str | None = typer.Option(None, "--query", "-q", help="Search query to filter"),
     apply_privacy: bool = typer.Option(False, "--privacy", "-p", help="Apply privacy rules"),
     pretty: bool = typer.Option(True, "--pretty/--compact", help="Pretty print JSON"),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output result as JSON"),
@@ -1220,7 +1257,7 @@ def export_json(
 @export_app.command("mbox")
 def export_mbox(
     output: Path = typer.Argument(..., help="Output file path"),
-    query: Optional[str] = typer.Option(None, "--query", "-q", help="Search query to filter"),
+    query: str | None = typer.Option(None, "--query", "-q", help="Search query to filter"),
     apply_privacy: bool = typer.Option(False, "--privacy", "-p", help="Apply privacy rules"),
     json: bool = typer.Option(False, "--json", "-j", help="Output result as JSON"),
 ) -> None:
@@ -1244,7 +1281,7 @@ def export_mbox(
 @export_app.command("markdown")
 def export_markdown(
     output: Path = typer.Argument(..., help="Output directory"),
-    query: Optional[str] = typer.Option(None, "--query", "-q", help="Search query to filter"),
+    query: str | None = typer.Option(None, "--query", "-q", help="Search query to filter"),
     apply_privacy: bool = typer.Option(False, "--privacy", "-p", help="Apply privacy rules"),
     threads: bool = typer.Option(False, "--threads", "-t", help="Group by thread"),
     json: bool = typer.Option(False, "--json", "-j", help="Output result as JSON"),
@@ -1255,9 +1292,7 @@ def export_markdown(
     db = get_db()
     with db.session() as session:
         emails, privacy_filter = _prepare_export(session, query, apply_privacy)
-        exporter = MarkdownExporter(
-            output, privacy_filter=privacy_filter, group_by_thread=threads
-        )
+        exporter = MarkdownExporter(output, privacy_filter=privacy_filter, group_by_thread=threads)
         result = exporter.export(emails)
 
     if json:
@@ -1274,7 +1309,8 @@ def list_tags(
     json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
     """List all tags in the archive."""
-    from sqlalchemy import select, func
+    from sqlalchemy import func, select
+
     from mtk.core.models import Tag, email_tags
 
     db = get_db()
@@ -1311,8 +1347,8 @@ def list_tags(
 @app.command("tag-batch")
 def tag_batch(
     query: str = typer.Argument(..., help="Search query to match emails"),
-    add: Optional[list[str]] = typer.Option(None, "--add", "-a", help="Tags to add"),
-    remove: Optional[list[str]] = typer.Option(None, "--remove", "-r", help="Tags to remove"),
+    add: list[str] | None = typer.Option(None, "--add", "-a", help="Tags to add"),
+    remove: list[str] | None = typer.Option(None, "--remove", "-r", help="Tags to remove"),
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Show what would be changed"),
     json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
@@ -1321,7 +1357,8 @@ def tag_batch(
     Example: mtk tag-batch "from:alice@example.com" --add work --add important
     """
     from sqlalchemy import select
-    from mtk.core.models import Email, Tag
+
+    from mtk.core.models import Tag
     from mtk.search import SearchEngine
 
     db = get_db()
@@ -1340,13 +1377,20 @@ def tag_batch(
 
         if dry_run:
             if json:
-                print(json_lib.dumps({
-                    "dry_run": True,
-                    "matched": len(emails),
-                    "emails": [{"id": e.message_id, "subject": e.subject} for e in emails[:20]],
-                    "add_tags": add or [],
-                    "remove_tags": remove or [],
-                }, indent=2))
+                print(
+                    json_lib.dumps(
+                        {
+                            "dry_run": True,
+                            "matched": len(emails),
+                            "emails": [
+                                {"id": e.message_id, "subject": e.subject} for e in emails[:20]
+                            ],
+                            "add_tags": add or [],
+                            "remove_tags": remove or [],
+                        },
+                        indent=2,
+                    )
+                )
             else:
                 console.print(f"[blue]Would modify {len(emails)} emails[/blue]")
                 for e in emails[:10]:
@@ -1360,9 +1404,7 @@ def tag_batch(
             changed = False
             if add:
                 for tag_name in add:
-                    existing_tag = session.execute(
-                        select(Tag).where(Tag.name == tag_name)
-                    ).scalar()
+                    existing_tag = session.execute(select(Tag).where(Tag.name == tag_name)).scalar()
                     if not existing_tag:
                         existing_tag = Tag(name=tag_name, source="mtk")
                         session.add(existing_tag)
@@ -1373,9 +1415,7 @@ def tag_batch(
 
             if remove:
                 for tag_name in remove:
-                    existing_tag = session.execute(
-                        select(Tag).where(Tag.name == tag_name)
-                    ).scalar()
+                    existing_tag = session.execute(select(Tag).where(Tag.name == tag_name)).scalar()
                     if existing_tag and existing_tag in email.tags:
                         email.tags.remove(existing_tag)
                         changed = True
@@ -1386,12 +1426,17 @@ def tag_batch(
         session.commit()
 
         if json:
-            print(json_lib.dumps({
-                "matched": len(emails),
-                "modified": modified,
-                "add_tags": add or [],
-                "remove_tags": remove or [],
-            }, indent=2))
+            print(
+                json_lib.dumps(
+                    {
+                        "matched": len(emails),
+                        "modified": modified,
+                        "add_tags": add or [],
+                        "remove_tags": remove or [],
+                    },
+                    indent=2,
+                )
+            )
         else:
             console.print(f"[green]Modified {modified} of {len(emails)} matched emails[/green]")
 
@@ -1413,23 +1458,30 @@ def llm_status(
     models = provider.list_models() if available else []
 
     if json:
-        print(json_lib.dumps({
-            "provider": "ollama",
-            "available": available,
-            "models": models,
-            "default_model": provider.model,
-        }, indent=2))
+        print(
+            json_lib.dumps(
+                {
+                    "provider": "ollama",
+                    "available": available,
+                    "models": models,
+                    "default_model": provider.model,
+                },
+                indent=2,
+            )
+        )
     else:
         status = "[green]Available[/green]" if available else "[red]Not available[/red]"
-        console.print(Panel.fit(
-            f"""[bold]LLM Provider Status[/bold]
+        console.print(
+            Panel.fit(
+                f"""[bold]LLM Provider Status[/bold]
 
 Provider: Ollama
 Status: {status}
 Default model: {provider.model}
-Available models: {', '.join(models) or 'None'}""",
-            title="LLM"
-        ))
+Available models: {", ".join(models) or "None"}""",
+                title="LLM",
+            )
+        )
 
 
 def _find_email_for_llm(session, message_id: str, json_output: bool):
@@ -1444,11 +1496,10 @@ def _find_email_for_llm(session, message_id: str, json_output: bool):
         The Email object if found (otherwise exits the process).
     """
     from sqlalchemy import select
+
     from mtk.core.models import Email
 
-    email = session.execute(
-        select(Email).where(Email.message_id.contains(message_id))
-    ).scalar()
+    email = session.execute(select(Email).where(Email.message_id.contains(message_id))).scalar()
 
     if not email:
         if json_output:
@@ -1488,8 +1539,9 @@ def llm_classify(
     message_id: str = typer.Argument(..., help="Message ID to classify"),
     categories: str = typer.Option(
         "work,personal,newsletter,notification,spam",
-        "--categories", "-c",
-        help="Comma-separated categories"
+        "--categories",
+        "-c",
+        help="Comma-separated categories",
     ),
     model: str = typer.Option("llama3.2", "--model", "-m", help="Ollama model to use"),
     json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
@@ -1566,11 +1618,16 @@ def llm_actions(
         actions = classifier.extract_actions(email)
 
     if json:
-        print(json_lib.dumps({
-            "message_id": email.message_id,
-            "subject": email.subject,
-            "actions": actions,
-        }, indent=2))
+        print(
+            json_lib.dumps(
+                {
+                    "message_id": email.message_id,
+                    "subject": email.subject,
+                    "actions": actions,
+                },
+                indent=2,
+            )
+        )
     else:
         console.print(f"[bold]Subject:[/bold] {email.subject}")
         if actions:
@@ -1586,8 +1643,9 @@ def llm_classify_batch(
     query: str = typer.Argument(..., help="Search query to match emails"),
     categories: str = typer.Option(
         "work,personal,newsletter,notification",
-        "--categories", "-c",
-        help="Comma-separated categories"
+        "--categories",
+        "-c",
+        help="Comma-separated categories",
     ),
     model: str = typer.Option("llama3.2", "--model", "-m", help="Ollama model to use"),
     apply_tags: bool = typer.Option(False, "--apply-tags", "-t", help="Apply category as tag"),
@@ -1596,8 +1654,9 @@ def llm_classify_batch(
 ) -> None:
     """Classify multiple emails using LLM."""
     from sqlalchemy import select
-    from mtk.core.models import Email, Tag
-    from mtk.llm import OllamaProvider, EmailClassifier
+
+    from mtk.core.models import Tag
+    from mtk.llm import EmailClassifier, OllamaProvider
     from mtk.search import SearchEngine
 
     db = get_db()
@@ -1632,9 +1691,7 @@ def llm_classify_batch(
             classifications.append(result)
 
             if apply_tags and result.category and result.category != "error":
-                tag = session.execute(
-                    select(Tag).where(Tag.name == result.category)
-                ).scalar()
+                tag = session.execute(select(Tag).where(Tag.name == result.category)).scalar()
                 if not tag:
                     tag = Tag(name=result.category, source="llm")
                     session.add(tag)
@@ -1645,11 +1702,16 @@ def llm_classify_batch(
             session.commit()
 
     if json:
-        print(json_lib.dumps({
-            "classified": len(classifications),
-            "results": [c.to_dict() for c in classifications],
-            "tags_applied": apply_tags,
-        }, indent=2))
+        print(
+            json_lib.dumps(
+                {
+                    "classified": len(classifications),
+                    "results": [c.to_dict() for c in classifications],
+                    "tags_applied": apply_tags,
+                },
+                indent=2,
+            )
+        )
     else:
         console.print(f"\n[green]Classified {len(classifications)} emails[/green]")
         for c in classifications:
@@ -1679,16 +1741,18 @@ def notmuch_status(
         print(json_lib.dumps(status, indent=2))
     else:
         available = "[green]Yes[/green]" if status.get("notmuch_available") else "[red]No[/red]"
-        console.print(Panel.fit(
-            f"""[bold]notmuch Integration Status[/bold]
+        console.print(
+            Panel.fit(
+                f"""[bold]notmuch Integration Status[/bold]
 
-Database path: {status.get('notmuch_path')}
+Database path: {status.get("notmuch_path")}
 Available: {available}
-mtk emails: {status.get('mtk_emails', 0):,}
-mtk tags: {status.get('mtk_tags', 0):,}
-Common emails: {status.get('common_emails', 'N/A')}""",
-            title="notmuch"
-        ))
+mtk emails: {status.get("mtk_emails", 0):,}
+mtk tags: {status.get("mtk_tags", 0):,}
+Common emails: {status.get("common_emails", "N/A")}""",
+                title="notmuch",
+            )
+        )
         if status.get("error"):
             console.print(f"[red]Error: {status['error']}[/red]")
 
@@ -1784,7 +1848,8 @@ def notmuch_import_cmd(
 
 
 # === IMAP Commands ===
-from mtk.cli.imap_cli import imap_app
+from mtk.cli.imap_cli import imap_app  # noqa: E402
+
 app.add_typer(imap_app, name="imap")
 
 
@@ -1803,7 +1868,7 @@ def mcp(
     except ImportError:
         console.print("[red]MCP support requires the mcp package.[/red]")
         console.print("Install with: pip install mtk[mcp]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     if transport != "stdio":
         console.print(f"[red]Unsupported transport: {transport}[/red]")
