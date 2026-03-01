@@ -123,37 +123,3 @@ class TestRelationshipAnalyzer:
             assert stats.person_id == person.id
             assert stats.person_name == person.name
 
-    def test_build_network(self, populated_db) -> None:
-        """Test building correspondence network."""
-        with populated_db.session() as session:
-            analyzer = RelationshipAnalyzer(session)
-            nodes, edges = analyzer.build_network(min_emails=1)
-
-            # Should have nodes for people with emails
-            assert len(nodes) >= 0  # May be 0 if no qualifying data
-
-    def test_export_network_json(self, populated_db) -> None:
-        """Test exporting network to JSON."""
-        import json
-
-        with populated_db.session() as session:
-            analyzer = RelationshipAnalyzer(session)
-            nodes, edges = analyzer.build_network(min_emails=1)
-
-            json_str = analyzer.export_network_json(nodes, edges)
-            data = json.loads(json_str)
-
-            assert "nodes" in data
-            assert "links" in data
-
-    def test_export_network_gexf(self, populated_db) -> None:
-        """Test exporting network to GEXF format."""
-        with populated_db.session() as session:
-            analyzer = RelationshipAnalyzer(session)
-            nodes, edges = analyzer.build_network(min_emails=1)
-
-            gexf = analyzer.export_network_gexf(nodes, edges)
-
-            assert '<?xml version="1.0"' in gexf
-            assert "<gexf" in gexf
-            assert "</gexf>" in gexf

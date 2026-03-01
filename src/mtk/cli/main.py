@@ -10,7 +10,6 @@ Usage:
     mtk reply <id>               Prepare context for reply
     mtk search QUERY             Search emails
     mtk people                   List/manage correspondents
-    mtk graph                    Generate relationship graph
     mtk import                   Import emails
     mtk shell                    Interactive shell mode
 """
@@ -875,39 +874,6 @@ def people_show(
             )
         )
 
-
-# === Graph Command ===
-@app.command()
-def graph(
-    output: Path = typer.Option(Path("network.gexf"), "--output", "-o"),
-    format: str = typer.Option("gexf", "--format", "-f", help="gexf, json, graphml"),
-    min_emails: int = typer.Option(2, "--min-emails", "-m"),
-) -> None:
-    """Generate correspondence network graph."""
-    from mtk.people import RelationshipAnalyzer
-
-    db = get_db()
-    with db.session() as session:
-        analyzer = RelationshipAnalyzer(session)
-        nodes, edges = analyzer.build_network(min_emails=min_emails)
-
-        if not nodes:
-            console.print("[yellow]No network data to export[/yellow]")
-            return
-
-        if format == "gexf":
-            content = analyzer.export_network_gexf(nodes, edges)
-        elif format == "json":
-            content = analyzer.export_network_json(nodes, edges)
-        elif format == "graphml":
-            content = analyzer.export_network_graphml(nodes, edges)
-        else:
-            console.print(f"[red]Unknown format: {format}[/red]")
-            raise typer.Exit(1)
-
-        output.write_text(content)
-        console.print(f"[green]Exported network to {output}[/green]")
-        console.print(f"  Nodes: {len(nodes)}, Edges: {len(edges)}")
 
 
 # === Stats Command ===

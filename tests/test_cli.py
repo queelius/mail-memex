@@ -72,15 +72,6 @@ class TestPeopleCommand:
         assert "people" in result.output.lower()
 
 
-class TestGraphCommand:
-    """Tests for the graph command."""
-
-    def test_graph_help(self) -> None:
-        """graph command should have help."""
-        result = runner.invoke(app, ["graph", "--help"])
-        assert result.exit_code == 0
-
-
 class TestStatsCommand:
     """Tests for the stats command."""
 
