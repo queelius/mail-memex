@@ -871,7 +871,6 @@ def people_show(
         )
 
 
-
 # === Stats Command ===
 @app.command()
 def stats(json: bool = typer.Option(False, "--json", "-j")) -> None:
@@ -1260,6 +1259,30 @@ def export_html(
     else:
         console.print(f"[green]Exported archive to {output}[/green]")
         console.print(f"  {result.emails_exported} emails, {output.stat().st_size / 1024:.0f} KB")
+
+
+@export_app.command("arkiv")
+def export_arkiv(
+    output: Path = typer.Argument(..., help="Output JSONL file path"),
+    query: str | None = typer.Option(None, "--query", "-q", help="Search query to filter"),
+    apply_privacy: bool = typer.Option(False, "--privacy", "-p", help="Apply privacy rules"),
+    include_body: bool = typer.Option(True, "--body/--no-body", help="Include email body text"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output result as JSON"),
+) -> None:
+    """Export emails to arkiv JSONL format."""
+    from mtk.export.arkiv_export import ArkivExporter
+
+    db = get_db()
+    with db.session() as session:
+        emails, privacy_filter = _prepare_export(session, query, apply_privacy)
+        exporter = ArkivExporter(output, privacy_filter=privacy_filter, include_body=include_body)
+        result = exporter.export(emails)
+
+    if json_output:
+        print(json_lib.dumps(result.to_dict(), indent=2))
+    else:
+        console.print(f"[green]Exported {result.emails_exported} emails to {output}[/green]")
+        console.print(f"  Schema written to {output.parent / 'schema.yaml'}")
 
 
 # === List Tags Command ===
