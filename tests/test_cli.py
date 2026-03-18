@@ -63,15 +63,6 @@ class TestSearchCommand:
             assert result.exit_code != 0 or "not initialized" in result.output.lower()
 
 
-class TestStatsCommand:
-    """Tests for the stats command."""
-
-    def test_stats_help(self) -> None:
-        """stats command should have help."""
-        result = runner.invoke(app, ["stats", "--help"])
-        assert result.exit_code == 0
-
-
 class TestTagCommand:
     """Tests for the tag command group (sub-app)."""
 
@@ -329,11 +320,6 @@ class TestImportCommand:
         result = runner.invoke(app, ["import", "--help"])
         assert result.exit_code == 0
 
-    def test_import_maildir_help(self) -> None:
-        """import maildir should have help."""
-        result = runner.invoke(app, ["import", "maildir", "--help"])
-        assert result.exit_code == 0
-
     def test_import_mbox_help(self) -> None:
         """import mbox should have help."""
         result = runner.invoke(app, ["import", "mbox", "--help"])
@@ -350,33 +336,6 @@ class TestImportCommand:
         assert result.exit_code == 0
 
 
-class TestInboxCommand:
-    """Tests for the inbox command."""
-
-    def test_inbox_help(self) -> None:
-        """inbox command should have help."""
-        result = runner.invoke(app, ["inbox", "--help"])
-        assert result.exit_code == 0
-
-
-class TestShowCommand:
-    """Tests for the show command."""
-
-    def test_show_help(self) -> None:
-        """show command should have help."""
-        result = runner.invoke(app, ["show", "--help"])
-        assert result.exit_code == 0
-
-
-class TestThreadCommand:
-    """Tests for the thread command."""
-
-    def test_thread_help(self) -> None:
-        """thread command should have help."""
-        result = runner.invoke(app, ["thread", "--help"])
-        assert result.exit_code == 0
-
-
 class TestCLIErrorHandling:
     """Tests for CLI error handling."""
 
@@ -390,9 +349,3 @@ class TestCLIErrorHandling:
         result = runner.invoke(app, ["search"])
         # Either shows help or requires argument
         assert "query" in result.output.lower() or result.exit_code != 0
-
-    def test_show_requires_message_id(self) -> None:
-        """show command should require message_id argument."""
-        result = runner.invoke(app, ["show"])
-        # Either shows help or requires argument
-        assert "message" in result.output.lower() or result.exit_code != 0

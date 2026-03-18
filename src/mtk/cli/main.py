@@ -4,13 +4,8 @@ Designed for both human use and Claude Code integration.
 Rich output for readability, JSON output for programmatic use.
 
 Usage:
-    mtk inbox                    Show recent emails
-    mtk show <id>                Show email with full context
-    mtk thread <id>              Show full thread conversation
-    mtk reply <id>               Prepare context for reply
     mtk search QUERY             Search emails
     mtk import                   Import emails
-    mtk shell                    Interactive shell mode
 """
 
 from __future__ import annotations
@@ -22,7 +17,6 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
-from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
@@ -76,25 +70,6 @@ def _ensure_tag(session, tag_name: str):
     return tag
 
 
-def format_email_summary(email, show_body: bool = False) -> str:
-    """Format email for display."""
-    lines = [
-        f"**From:** {email.from_name or ''} <{email.from_addr}>",
-        f"**Date:** {format_date(email.date)}",
-        f"**Subject:** {email.subject or '(no subject)'}",
-    ]
-    if email.in_reply_to:
-        lines.append(f"**In-Reply-To:** {email.in_reply_to}")
-
-    if show_body and email.body_text:
-        lines.append("")
-        lines.append("---")
-        lines.append("")
-        lines.append(email.body_text)
-
-    return "\n".join(lines)
-
-
 @app.callback()
 def main(
     version: bool = typer.Option(False, "--version", "-V", help="Show version and exit"),
@@ -105,368 +80,15 @@ def main(
         raise typer.Exit()
 
 
-# === Inbox Command ===
-@app.command()
-def inbox(
-    limit: int = typer.Option(20, "--limit", "-n", help="Maximum emails to show"),
-    since: str | None = typer.Option(
-        None, "--since", "-s", help="Show emails since date (YYYY-MM-DD)"
-    ),
-    unread: bool = typer.Option(False, "--unread", "-u", help="Show only unread/unprocessed"),
-    json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
-) -> None:
-    """Show recent emails (inbox view).
-
-    Perfect for quick overview of what needs attention.
-    """
-    from sqlalchemy import desc, select
-
-    from mtk.core.models import Email
-
-    db = get_db()
-    with db.session() as session:
-        stmt = select(Email).order_by(desc(Email.date)).limit(limit)
-
-        if since:
-            try:
-                since_date = datetime.strptime(since, "%Y-%m-%d")
-                stmt = stmt.where(Email.date >= since_date)
-            except ValueError:
-                console.print(f"[red]Invalid date format: {since}[/red]")
-                raise typer.Exit(1) from None
-
-        emails = list(session.execute(stmt).scalars())
-
-        if json:
-            data = [
-                {
-                    "id": e.message_id,
-                    "from": e.from_addr,
-                    "from_name": e.from_name,
-                    "subject": e.subject,
-                    "date": e.date.isoformat() if e.date else None,
-                    "preview": e.body_preview,
-                    "thread_id": e.thread_id,
-                }
-                for e in emails
-            ]
-            print(json_lib.dumps(data, indent=2))
-            return
-
-        if not emails:
-            console.print("[yellow]No emails found[/yellow]")
-            return
-
-        table = Table(title=f"Recent Emails ({len(emails)})")
-        table.add_column("#", style="dim", width=3)
-        table.add_column("Date", style="cyan", width=16)
-        table.add_column("From", width=25)
-        table.add_column("Subject")
-
-        for i, email in enumerate(emails, 1):
-            table.add_row(
-                str(i),
-                format_date(email.date),
-                f"{email.from_name or email.from_addr}"[:24],
-                (email.subject or "(no subject)")[:60],
-            )
-
-        console.print(table)
-        console.print("\n[dim]Use 'mtk show <message-id>' to view full email[/dim]")
-
-
-# === Show Command ===
-@app.command()
-def show(
-    message_id: str = typer.Argument(..., help="Message ID or partial match"),
-    json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
-    raw: bool = typer.Option(False, "--raw", "-r", help="Show raw headers"),
-    context: int = typer.Option(0, "--context", "-c", help="Show N surrounding thread messages"),
-) -> None:
-    """Show a single email with full content.
-
-    Displays headers, body, and optionally thread context.
-    """
-    from sqlalchemy import select
-
-    from mtk.core.models import Email
-
-    db = get_db()
-    with db.session() as session:
-        # Find email (exact or partial match)
-        stmt = select(Email).where(Email.message_id == message_id)
-        email = session.execute(stmt).scalar()
-
-        if not email:
-            # Try partial match
-            stmt = select(Email).where(Email.message_id.contains(message_id)).limit(1)
-            email = session.execute(stmt).scalar()
-
-        if not email:
-            console.print(f"[red]Email not found: {message_id}[/red]")
-            raise typer.Exit(1)
-
-        if json:
-            data = {
-                "id": email.message_id,
-                "thread_id": email.thread_id,
-                "from": email.from_addr,
-                "from_name": email.from_name,
-                "subject": email.subject,
-                "date": email.date.isoformat() if email.date else None,
-                "in_reply_to": email.in_reply_to,
-                "body_text": email.body_text,
-                "body_html": email.body_html,
-                "attachments": [
-                    {"filename": a.filename, "type": a.content_type, "size": a.size}
-                    for a in email.attachments
-                ],
-            }
-            print(json_lib.dumps(data, indent=2))
-            return
-
-        # Display email
-        console.print(
-            Panel.fit(
-                f"""[bold]From:[/bold] {email.from_name or ""} <{email.from_addr}>
-[bold]Date:[/bold] {format_date(email.date)}
-[bold]Subject:[/bold] {email.subject or "(no subject)"}
-[bold]Message-ID:[/bold] {email.message_id}
-[bold]Thread-ID:[/bold] {email.thread_id or "N/A"}
-[bold]In-Reply-To:[/bold] {email.in_reply_to or "N/A"}""",
-                title="Email Headers",
-            )
-        )
-
-        # Attachments
-        if email.attachments:
-            console.print("\n[bold]Attachments:[/bold]")
-            for att in email.attachments:
-                size_kb = (att.size or 0) / 1024
-                console.print(f"  📎 {att.filename} ({att.content_type}, {size_kb:.1f} KB)")
-
-        # Body
-        console.print("\n[bold]Body:[/bold]")
-        console.print(Panel(email.body_text or "(no content)", border_style="dim"))
-
-        # Thread context
-        if context > 0 and email.thread_id:
-            stmt = (
-                select(Email)
-                .where(Email.thread_id == email.thread_id)
-                .where(Email.id != email.id)
-                .order_by(Email.date)
-                .limit(context)
-            )
-            related = list(session.execute(stmt).scalars())
-            if related:
-                console.print(f"\n[bold]Thread Context ({len(related)} related):[/bold]")
-                for r in related:
-                    console.print(f"  • {format_date(r.date)} - {r.from_addr}: {r.subject}")
-
-
-# === Thread Command ===
-@app.command()
-def thread(
-    thread_id: str = typer.Argument(..., help="Thread ID or message ID"),
-    json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
-) -> None:
-    """Show full thread conversation.
-
-    Great for understanding the context of a conversation.
-    """
-    from sqlalchemy import select
-
-    from mtk.core.models import Email
-    from mtk.core.models import Thread as ThreadModel
-
-    db = get_db()
-    with db.session() as session:
-        # Find thread (could be thread ID or message ID)
-        thread_obj = session.execute(
-            select(ThreadModel).where(ThreadModel.thread_id == thread_id)
-        ).scalar()
-
-        if thread_obj:
-            tid = thread_obj.thread_id
-        else:
-            # Try to find by message ID
-            email = session.execute(select(Email).where(Email.message_id == thread_id)).scalar()
-            if email and email.thread_id:
-                tid = email.thread_id
-            else:
-                console.print(f"[red]Thread not found: {thread_id}[/red]")
-                raise typer.Exit(1)
-
-        # Get all emails in thread
-        stmt = select(Email).where(Email.thread_id == tid).order_by(Email.date)
-        emails = list(session.execute(stmt).scalars())
-
-        if not emails:
-            console.print("[yellow]No emails in thread[/yellow]")
-            return
-
-        if json:
-            data = {
-                "thread_id": tid,
-                "message_count": len(emails),
-                "messages": [
-                    {
-                        "id": e.message_id,
-                        "from": e.from_addr,
-                        "from_name": e.from_name,
-                        "date": e.date.isoformat() if e.date else None,
-                        "subject": e.subject,
-                        "body": e.body_text,
-                    }
-                    for e in emails
-                ],
-            }
-            print(json_lib.dumps(data, indent=2))
-            return
-
-        # Display thread
-        console.print(
-            Panel.fit(
-                f"[bold]Thread:[/bold] {emails[0].subject or 'No subject'}\n"
-                f"[bold]Messages:[/bold] {len(emails)}\n"
-                f"[bold]Participants:[/bold] {', '.join({e.from_addr for e in emails})}",
-                title="Thread Summary",
-            )
-        )
-
-        for i, email in enumerate(emails, 1):
-            console.print(f"\n[bold cyan]--- Message {i}/{len(emails)} ---[/bold cyan]")
-            console.print(f"[bold]From:[/bold] {email.from_name or email.from_addr}")
-            console.print(f"[bold]Date:[/bold] {format_date(email.date)}")
-            console.print()
-            console.print(email.body_text or "(no content)")
-
-
-# === Reply Command ===
-@app.command()
-def reply(
-    message_id: str = typer.Argument(..., help="Message ID to reply to"),
-    include_thread: bool = typer.Option(
-        True, "--thread/--no-thread", help="Include thread context"
-    ),
-    json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
-) -> None:
-    """Prepare context for composing a reply.
-
-    Shows the email being replied to, thread history, and suggests
-    reply headers. Perfect for Claude Code to help draft responses.
-    """
-    from sqlalchemy import select
-
-    from mtk.core.models import Email
-
-    db = get_db()
-    with db.session() as session:
-        # Find email
-        stmt = select(Email).where(Email.message_id == message_id)
-        email = session.execute(stmt).scalar()
-
-        if not email:
-            stmt = select(Email).where(Email.message_id.contains(message_id)).limit(1)
-            email = session.execute(stmt).scalar()
-
-        if not email:
-            console.print(f"[red]Email not found: {message_id}[/red]")
-            raise typer.Exit(1)
-
-        # Get thread history if requested
-        thread_history = []
-        if include_thread and email.thread_id:
-            stmt = (
-                select(Email)
-                .where(Email.thread_id == email.thread_id)
-                .where(Email.date < email.date)
-                .order_by(Email.date.desc())
-                .limit(5)
-            )
-            thread_history = list(session.execute(stmt).scalars())
-            thread_history.reverse()  # Oldest first
-
-        if json:
-            data = {
-                "replying_to": {
-                    "id": email.message_id,
-                    "from": email.from_addr,
-                    "from_name": email.from_name,
-                    "date": email.date.isoformat() if email.date else None,
-                    "subject": email.subject,
-                    "body": email.body_text,
-                },
-                "suggested_headers": {
-                    "to": email.from_addr,
-                    "subject": f"Re: {email.subject}"
-                    if email.subject and not email.subject.startswith("Re:")
-                    else email.subject,
-                    "in_reply_to": email.message_id,
-                    "references": f"{email.references or ''} {email.message_id}".strip(),
-                },
-                "thread_history": [
-                    {
-                        "from": e.from_addr,
-                        "from_name": e.from_name,
-                        "date": e.date.isoformat() if e.date else None,
-                        "body": e.body_text,
-                    }
-                    for e in thread_history
-                ],
-            }
-            print(json_lib.dumps(data, indent=2))
-            return
-
-        # Display reply context
-        console.print("[bold blue]📧 REPLY CONTEXT[/bold blue]\n")
-
-        # Original message
-        console.print(
-            Panel.fit(
-                f"""[bold]Replying to:[/bold] {email.from_name or email.from_addr}
-[bold]Original Subject:[/bold] {email.subject}
-[bold]Sent:[/bold] {format_date(email.date)}""",
-                title="Original Message",
-            )
-        )
-
-        console.print("\n[bold]Original Body:[/bold]")
-        console.print(Panel(email.body_text or "(no content)", border_style="dim"))
-
-        # Thread history
-        if thread_history:
-            console.print("\n[bold]Previous Messages in Thread:[/bold]")
-            for h in thread_history:
-                console.print(f"\n[dim]{format_date(h.date)} - {h.from_addr}:[/dim]")
-                preview = (h.body_text or "")[:200]
-                if len(h.body_text or "") > 200:
-                    preview += "..."
-                console.print(f"  {preview}")
-
-        # Suggested headers
-        console.print("\n[bold green]Suggested Reply Headers:[/bold green]")
-        console.print(f"  To: {email.from_addr}")
-        subject = email.subject or ""
-        if not subject.startswith("Re:"):
-            subject = f"Re: {subject}"
-        console.print(f"  Subject: {subject}")
-        console.print(f"  In-Reply-To: {email.message_id}")
-
-
 # === Init Command ===
 @app.command()
 def init(
-    path: Path | None = typer.Argument(
-        None, help="Path to email source (Maildir, mbox, or directory)"
-    ),
     db_path: Path | None = typer.Option(
         None, "--db", "-d", help="Database path (default: ~/.local/share/mtk/mtk.db)"
     ),
     force: bool = typer.Option(False, "--force", "-f", help="Reinitialize if already exists"),
 ) -> None:
-    """Initialize mtk database and optionally import emails."""
+    """Initialize mtk database."""
     config = MtkConfig.load()
     config.ensure_dirs()
 
@@ -486,27 +108,10 @@ def init(
 
     console.print(f"[green]Initialized mtk database at {config.db_path}[/green]")
 
-    if path:
-        _run_import(path, db)
-
 
 # === Import Commands ===
 import_app = typer.Typer(help="Import emails from various sources")
 app.add_typer(import_app, name="import")
-
-
-@import_app.command("maildir")
-def import_maildir(
-    path: Path = typer.Argument(..., help="Path to Maildir directory"),
-    include_subfolders: bool = typer.Option(True, "--subfolders/--no-subfolders"),
-    json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
-) -> None:
-    """Import emails from Maildir format."""
-    from mtk.importers import MaildirImporter
-
-    db = get_db()
-    importer = MaildirImporter(path, include_subfolders=include_subfolders)
-    _run_import_with_importer(importer, db, json_output=json)
 
 
 @import_app.command("mbox")
@@ -547,23 +152,6 @@ def import_gmail(
     db = get_db()
     importer = GmailTakeoutImporter(path)
     _run_import_with_importer(importer, db, json_output=json)
-
-
-def _run_import(path: Path, db: Database) -> None:
-    """Auto-detect format and import."""
-    from mtk.importers import EmlImporter, MaildirImporter, MboxImporter
-
-    if path.is_file():
-        if path.suffix.lower() == ".mbox":  # noqa: SIM108
-            importer = MboxImporter(path)
-        else:
-            importer = EmlImporter(path)
-    elif (path / "cur").exists() and (path / "new").exists():
-        importer = MaildirImporter(path)
-    else:
-        importer = EmlImporter(path)
-
-    _run_import_with_importer(importer, db)
 
 
 def _build_threads(session) -> int:
@@ -795,65 +383,6 @@ def search(
             )
 
         console.print(table)
-
-
-# === Stats Command ===
-@app.command()
-def stats(json: bool = typer.Option(False, "--json", "-j")) -> None:
-    """Show archive statistics."""
-    from sqlalchemy import func, select
-
-    from mtk.core.models import Attachment, Email, Tag, Thread
-
-    db = get_db()
-    with db.session() as session:
-        email_count = session.execute(select(func.count(Email.id))).scalar() or 0
-        thread_count = session.execute(select(func.count(Thread.id))).scalar() or 0
-        tag_count = session.execute(select(func.count(Tag.id))).scalar() or 0
-        attachment_count = session.execute(select(func.count(Attachment.id))).scalar() or 0
-
-        date_result = session.execute(select(func.min(Email.date), func.max(Email.date))).one()
-
-    # FTS5 stats (outside session context — uses engine directly)
-    from mtk.search import fts_stats as get_fts_stats
-
-    fts_info = get_fts_stats(db.engine)
-
-    if json:
-        data = {
-            "emails": email_count,
-            "threads": thread_count,
-            "tags": tag_count,
-            "attachments": attachment_count,
-            "date_from": date_result[0].isoformat() if date_result[0] else None,
-            "date_to": date_result[1].isoformat() if date_result[1] else None,
-            "fts5": fts_info,
-        }
-        print(json_lib.dumps(data, indent=2))
-        return
-
-    fts_status = (
-        "[green]Active[/green]" if fts_info["available"] else "[yellow]Unavailable[/yellow]"
-    )
-    fts_line = f"\nFTS5 Search: {fts_status}"
-    if fts_info["available"]:
-        fts_line += f" ({fts_info['indexed_count']:,} indexed)"
-        if not fts_info["in_sync"]:
-            fts_line += " [yellow](out of sync)[/yellow]"
-
-    panel = Panel.fit(
-        f"""[bold]Email Archive Statistics[/bold]
-
-Emails:      {email_count:,}
-Threads:     {thread_count:,}
-Tags:        {tag_count:,}
-Attachments: {attachment_count:,}
-
-Date Range:  {date_result[0] or "N/A"} to {date_result[1] or "N/A"}
-{fts_line}""",
-        title="mtk",
-    )
-    console.print(panel)
 
 
 # === Rebuild Commands ===
@@ -1305,20 +834,6 @@ def mcp(
         raise typer.Exit(1)
 
     run_server()
-
-
-# === Shell Command ===
-@app.command()
-def shell() -> None:
-    """Start interactive shell mode.
-
-    Provides a REPL interface for exploring and managing emails.
-    Commands: inbox, search, show, thread, tag, next, prev, stats, quit
-    """
-    from mtk.cli.shell import run_shell
-
-    db = get_db()
-    run_shell(db)
 
 
 if __name__ == "__main__":

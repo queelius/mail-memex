@@ -2,7 +2,6 @@
 
 These tests define the expected behavior of the import system:
 - BaseImporter: Abstract base class and ImportStats
-- MaildirImporter: Standard Maildir format with flags
 - MboxImporter: Unix mbox format with Gmail support
 - EmlImporter: Individual EML files
 - GmailTakeoutImporter: Gmail Takeout exports
@@ -14,7 +13,6 @@ import pytest
 
 from mtk.importers.base import ImportStats
 from mtk.importers.eml import EmlImporter, GmailTakeoutImporter
-from mtk.importers.maildir import MaildirImporter
 from mtk.importers.mbox import MboxImporter
 from mtk.importers.parser import ParsedEmail
 
@@ -64,19 +62,19 @@ class TestImportStats:
 class TestBaseImporter:
     """Tests for BaseImporter abstract base class."""
 
-    def test_source_path_converted_to_path(self, sample_maildir: Path) -> None:
+    def test_source_path_converted_to_path(self, sample_eml_dir: Path) -> None:
         """Source path string should be converted to Path."""
-        importer = MaildirImporter(str(sample_maildir))
+        importer = EmlImporter(str(sample_eml_dir))
         assert isinstance(importer.source_path, Path)
 
     def test_nonexistent_path_raises(self, tmp_dir: Path) -> None:
         """Should raise FileNotFoundError for nonexistent path."""
         with pytest.raises(FileNotFoundError, match="Source not found"):
-            MaildirImporter(tmp_dir / "nonexistent")
+            EmlImporter(tmp_dir / "nonexistent")
 
-    def test_import_all_yields_parsed_emails(self, sample_maildir: Path) -> None:
+    def test_import_all_yields_parsed_emails(self, sample_eml_dir: Path) -> None:
         """import_all should yield (ParsedEmail, None) tuples."""
-        importer = MaildirImporter(sample_maildir)
+        importer = EmlImporter(sample_eml_dir)
         results = list(importer.import_all())
 
         assert len(results) > 0
@@ -87,134 +85,16 @@ class TestBaseImporter:
 
     def test_import_all_handles_errors(self, tmp_dir: Path) -> None:
         """import_all should yield (None, error_message) for failures."""
-        # Create invalid maildir
-        maildir = tmp_dir / "bad_maildir"
-        (maildir / "cur").mkdir(parents=True)
-        (maildir / "new").mkdir()
-        # Write invalid content
-        (maildir / "cur" / "bad_email").write_bytes(b"\xff\xfe not valid email")
+        # Create directory with invalid email
+        eml_dir = tmp_dir / "bad_eml"
+        eml_dir.mkdir()
+        (eml_dir / "bad_email.eml").write_bytes(b"")
 
-        importer = MaildirImporter(maildir)
+        importer = EmlImporter(eml_dir)
         results = list(importer.import_all())
 
         # Should have one result (bad file) - may or may not error
         assert len(results) == 1
-
-
-class TestMaildirImporter:
-    """Tests for Maildir format importer."""
-
-    def test_format_name(self, sample_maildir: Path) -> None:
-        """Format name should be 'Maildir'."""
-        importer = MaildirImporter(sample_maildir)
-        assert importer.format_name == "Maildir"
-
-    def test_invalid_maildir_raises(self, tmp_dir: Path) -> None:
-        """Should raise ValueError for non-Maildir directory."""
-        # Just a plain directory, not a maildir
-        with pytest.raises(ValueError, match="Not a valid Maildir"):
-            MaildirImporter(tmp_dir)
-
-    def test_discover_finds_emails_in_cur(self, sample_maildir: Path) -> None:
-        """Should discover emails in cur/ directory."""
-        importer = MaildirImporter(sample_maildir)
-        paths = list(importer.discover())
-
-        cur_emails = [p for p in paths if "cur" in str(p)]
-        assert len(cur_emails) >= 2  # email1 and email3
-
-    def test_discover_finds_emails_in_new(self, sample_maildir: Path) -> None:
-        """Should discover emails in new/ directory."""
-        importer = MaildirImporter(sample_maildir)
-        paths = list(importer.discover())
-
-        new_emails = [p for p in paths if "new" in str(p)]
-        assert len(new_emails) >= 1  # email2
-
-    def test_discover_all_emails(self, sample_maildir: Path) -> None:
-        """Should discover all 3 test emails."""
-        importer = MaildirImporter(sample_maildir)
-        paths = list(importer.discover())
-
-        assert len(paths) == 3
-
-    def test_parse_returns_parsed_email(self, sample_maildir: Path) -> None:
-        """Parsing should return ParsedEmail object."""
-        importer = MaildirImporter(sample_maildir)
-        email_path = sample_maildir / "cur" / "1705330800.M001P1234:2,S"
-
-        result = importer.parse(email_path)
-
-        assert isinstance(result, ParsedEmail)
-        assert result.from_addr == "alice@example.com"
-        assert result.subject == "Hello Bob"
-
-    def test_extract_maildir_flags_seen(self, sample_maildir: Path) -> None:
-        """Should extract S (Seen) flag from filename."""
-        importer = MaildirImporter(sample_maildir)
-        email_path = sample_maildir / "cur" / "1705330800.M001P1234:2,S"
-
-        result = importer.parse(email_path)
-
-        assert "S" in result.raw_headers.get("X-Maildir-Flags", "")
-
-    def test_extract_maildir_flags_multiple(self, sample_maildir: Path) -> None:
-        """Should extract multiple flags from filename."""
-        importer = MaildirImporter(sample_maildir)
-        # email3 has :2,RS (Replied, Seen)
-        email_path = sample_maildir / "cur" / "1705345200.M003P1234:2,RS"
-
-        result = importer.parse(email_path)
-        flags = result.raw_headers.get("X-Maildir-Flags", "")
-
-        assert "R" in flags
-        assert "S" in flags
-
-    def test_extract_no_flags(self, sample_maildir: Path) -> None:
-        """Should handle emails without flags in filename."""
-        importer = MaildirImporter(sample_maildir)
-        # email2 in new/ has no flags
-        email_path = sample_maildir / "new" / "1705334400.M002P1234"
-
-        result = importer.parse(email_path)
-
-        assert result.raw_headers.get("X-Maildir-Flags", "") == ""
-
-    def test_include_subfolders_true(self, sample_maildir_with_subfolders: Path) -> None:
-        """Should include .Sent and other subfolders by default."""
-        importer = MaildirImporter(sample_maildir_with_subfolders, include_subfolders=True)
-        paths = list(importer.discover())
-
-        # 3 from main + 1 from .Sent = 4
-        assert len(paths) == 4
-        sent_emails = [p for p in paths if ".Sent" in str(p)]
-        assert len(sent_emails) == 1
-
-    def test_include_subfolders_false(self, sample_maildir_with_subfolders: Path) -> None:
-        """Should not include subfolders when disabled."""
-        importer = MaildirImporter(sample_maildir_with_subfolders, include_subfolders=False)
-        paths = list(importer.discover())
-
-        # Only 3 from main maildir
-        assert len(paths) == 3
-
-    def test_file_path_set_on_parsed(self, sample_maildir: Path) -> None:
-        """Parsed email should have file_path set."""
-        importer = MaildirImporter(sample_maildir)
-        email_path = sample_maildir / "cur" / "1705330800.M001P1234:2,S"
-
-        result = importer.parse(email_path)
-
-        assert result.file_path == email_path
-
-    def test_import_all(self, sample_maildir: Path) -> None:
-        """Test importing all emails."""
-        importer = MaildirImporter(sample_maildir)
-        results = list(importer.import_all())
-
-        # Should have 3 successful imports
-        successful = [r for r, e in results if r is not None]
-        assert len(successful) == 3
 
 
 class TestMboxImporter:
