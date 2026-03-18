@@ -1,4 +1,4 @@
-"""IMAP sync for mtk — bidirectional Gmail/IMAP sync.
+"""IMAP sync for mtk — pull-only Gmail/IMAP sync.
 
 Usage:
     from mtk.imap import ImapSync
@@ -16,23 +16,20 @@ if TYPE_CHECKING:
 
     from mtk.imap.account import ImapAccountConfig
     from mtk.imap.pull import PullResult
-    from mtk.imap.push import PushResult
 
 
 @dataclass
 class SyncResult:
-    """Combined result of pull + push sync."""
+    """Result of a pull sync."""
 
     account: str = ""
     pull_results: list[PullResult] = field(default_factory=list)
-    push_result: dict[str, Any] | None = None
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "account": self.account,
             "pull_results": [r.to_dict() for r in self.pull_results],
-            "push_result": self.push_result,
             "errors": self.errors,
         }
 
@@ -40,7 +37,7 @@ class SyncResult:
 class ImapSync:
     """Orchestrator for IMAP sync operations.
 
-    Coordinates pull and push sync for a single account.
+    Coordinates pull sync for a single account.
     """
 
     def __init__(
@@ -54,17 +51,9 @@ class ImapSync:
         self.password = password
 
     def sync(self) -> SyncResult:
-        """Full bidirectional sync: pull then push."""
+        """Pull new messages from IMAP."""
         result = SyncResult(account=self.account.name)
-
-        # Pull first
-        pull_results = self.pull_only()
-        result.pull_results = pull_results
-
-        # Then push
-        push_result = self.push_only()
-        result.push_result = push_result.to_dict()
-
+        result.pull_results = self.pull_only()
         return result
 
     def pull_only(self) -> list[PullResult]:
@@ -84,37 +73,17 @@ class ImapSync:
 
         return results
 
-    def push_only(self) -> PushResult:
-        """Push pending tag changes to IMAP server."""
-        from mtk.imap.connection import ImapConnection
-        from mtk.imap.mapping import TagMapper
-        from mtk.imap.push import PushSync
-
-        tag_mapper = TagMapper(is_gmail=self.account.provider == "gmail")
-        push_sync = PushSync(self.session, self.account, tag_mapper)
-        result: PushResult | None = None
-
-        with ImapConnection(self.account, self.password) as client:
-            result = push_sync.push(client)
-
-        assert result is not None
-        return result
-
     def status(self) -> dict[str, Any]:
         """Get sync status for all folders."""
         from sqlalchemy import select
 
-        from mtk.core.models import ImapPendingPush, ImapSyncState
+        from mtk.core.models import ImapSyncState
 
         states = list(
             self.session.execute(
                 select(ImapSyncState).where(ImapSyncState.account_name == self.account.name)
             ).scalars()
         )
-
-        pending_count = self.session.execute(
-            select(ImapPendingPush).where(ImapPendingPush.account_name == self.account.name)
-        ).scalars()
 
         return {
             "account": self.account.name,
@@ -129,5 +98,4 @@ class ImapSync:
                 }
                 for s in states
             ],
-            "pending_push": sum(1 for _ in pending_count),
         }

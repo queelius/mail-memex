@@ -946,13 +946,6 @@ def tag_add(
         if not json:
             console.print(f"[green]Added tags: {', '.join(tags)}[/green]")
 
-        # Queue tag changes for IMAP push if email is IMAP-tracked
-        if email.imap_account:
-            from mtk.imap.push import queue_tag_change
-
-            for tag_name in tags:
-                queue_tag_change(session, email.id, email.imap_account, "add", tag_name)
-
         session.commit()
 
         current_tags = [t.name for t in email.tags]
@@ -998,13 +991,6 @@ def tag_remove(
                 email.tags.remove(existing_tag)
         if not json:
             console.print(f"[yellow]Removed tags: {', '.join(tags)}[/yellow]")
-
-        # Queue tag changes for IMAP push if email is IMAP-tracked
-        if email.imap_account:
-            from mtk.imap.push import queue_tag_change
-
-            for tag_name in tags:
-                queue_tag_change(session, email.id, email.imap_account, "remove", tag_name)
 
         session.commit()
 

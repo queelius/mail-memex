@@ -5,8 +5,6 @@ Tests cover:
 - Auth manager
 - Sync state management
 - Pull sync with mock IMAPClient
-- Push sync with mock IMAPClient
-- Queue-based push
 - Auth manager (keyring-based credential storage)
 - IMAP connection management
 - Pull sync (incremental fetch from IMAP server)
@@ -21,11 +19,10 @@ import pytest
 from sqlalchemy import select
 
 from mtk.core.database import Database
-from mtk.core.models import Email, ImapPendingPush, ImapSyncState, Tag
+from mtk.core.models import Email, ImapSyncState, Tag
 from mtk.imap.account import ImapAccountConfig
 from mtk.imap.gmail import GmailExtensions
 from mtk.imap.mapping import TagMapper
-from mtk.imap.push import PushSync, queue_tag_change
 
 # =============================================================================
 # Fixtures
@@ -304,163 +301,6 @@ class TestSyncState:
             assert email is not None
             assert email.imap_uid is None
             assert email.imap_account is None
-
-
-# =============================================================================
-# Push Queue Tests
-# =============================================================================
-
-
-class TestPushQueue:
-    """Tests for the tag change push queue."""
-
-    def test_queue_tag_change(self, imap_populated_db: Database) -> None:
-        """queue_tag_change should create a pending push entry."""
-        with imap_populated_db.session() as session:
-            email = session.execute(
-                select(Email).where(Email.message_id == "imap1@example.com")
-            ).scalar()
-
-            queue_tag_change(session, email.id, "test", "add", "important")
-            session.commit()
-
-            pending = (
-                session.execute(select(ImapPendingPush).where(ImapPendingPush.email_id == email.id))
-                .scalars()
-                .all()
-            )
-            assert len(pending) == 1
-            assert pending[0].action == "add"
-            assert pending[0].tag_name == "important"
-
-    def test_queue_multiple_changes(self, imap_populated_db: Database) -> None:
-        """Multiple tag changes should create multiple entries."""
-        with imap_populated_db.session() as session:
-            email = session.execute(
-                select(Email).where(Email.message_id == "imap1@example.com")
-            ).scalar()
-
-            queue_tag_change(session, email.id, "test", "add", "urgent")
-            queue_tag_change(session, email.id, "test", "remove", "read")
-            session.commit()
-
-            pending = (
-                session.execute(select(ImapPendingPush).where(ImapPendingPush.email_id == email.id))
-                .scalars()
-                .all()
-            )
-            assert len(pending) == 2
-
-
-# =============================================================================
-# Push Sync Tests (with mock)
-# =============================================================================
-
-
-class TestPushSync:
-    """Tests for push sync with mock IMAPClient."""
-
-    def test_push_empty_queue(
-        self, imap_populated_db: Database, imap_account: ImapAccountConfig
-    ) -> None:
-        """Push with empty queue should do nothing."""
-        with imap_populated_db.session() as session:
-            mapper = TagMapper()
-            push = PushSync(session, imap_account, mapper)
-            mock_client = MagicMock()
-
-            result = push.push(mock_client)
-            assert result.processed == 0
-            assert result.succeeded == 0
-
-    def test_push_add_flags(
-        self, imap_populated_db: Database, imap_account: ImapAccountConfig
-    ) -> None:
-        """Push should add IMAP flags for tag additions."""
-        with imap_populated_db.session() as session:
-            email = session.execute(
-                select(Email).where(Email.message_id == "imap1@example.com")
-            ).scalar()
-
-            queue_tag_change(session, email.id, "test", "add", "replied")
-            session.flush()
-
-            mapper = TagMapper()
-            push = PushSync(session, imap_account, mapper)
-            mock_client = MagicMock()
-
-            result = push.push(mock_client)
-            assert result.succeeded >= 1
-            mock_client.select_folder.assert_called()
-            mock_client.add_flags.assert_called()
-
-    def test_push_remove_flags(
-        self, imap_populated_db: Database, imap_account: ImapAccountConfig
-    ) -> None:
-        """Push should remove IMAP flags for tag removals."""
-        with imap_populated_db.session() as session:
-            email = session.execute(
-                select(Email).where(Email.message_id == "imap1@example.com")
-            ).scalar()
-
-            queue_tag_change(session, email.id, "test", "remove", "read")
-            session.flush()
-
-            mapper = TagMapper()
-            push = PushSync(session, imap_account, mapper)
-            mock_client = MagicMock()
-
-            result = push.push(mock_client)
-            assert result.succeeded >= 1
-            mock_client.remove_flags.assert_called()
-
-    def test_push_clears_queue(
-        self, imap_populated_db: Database, imap_account: ImapAccountConfig
-    ) -> None:
-        """Push should clear processed items from queue."""
-        with imap_populated_db.session() as session:
-            email = session.execute(
-                select(Email).where(Email.message_id == "imap1@example.com")
-            ).scalar()
-
-            queue_tag_change(session, email.id, "test", "add", "flagged")
-            session.flush()
-
-            mapper = TagMapper()
-            push = PushSync(session, imap_account, mapper)
-            mock_client = MagicMock()
-
-            push.push(mock_client)
-
-            # Queue should be empty
-            remaining = (
-                session.execute(
-                    select(ImapPendingPush).where(ImapPendingPush.account_name == "test")
-                )
-                .scalars()
-                .all()
-            )
-            assert len(remaining) == 0
-
-    def test_push_non_imap_email_skipped(
-        self, imap_populated_db: Database, imap_account: ImapAccountConfig
-    ) -> None:
-        """Push for non-IMAP emails should skip gracefully."""
-        with imap_populated_db.session() as session:
-            email = session.execute(
-                select(Email).where(Email.message_id == "local@example.com")
-            ).scalar()
-
-            queue_tag_change(session, email.id, "test", "add", "important")
-            session.flush()
-
-            mapper = TagMapper()
-            push = PushSync(session, imap_account, mapper)
-            mock_client = MagicMock()
-
-            result = push.push(mock_client)
-            # Should have errors but not crash
-            assert result.failed >= 1
 
 
 # =============================================================================

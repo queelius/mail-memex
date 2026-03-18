@@ -179,21 +179,3 @@ class ImapSyncState(Base):
         return f"<ImapSyncState {self.account_name}/{self.folder} uid={self.last_uid}>"
 
 
-class ImapPendingPush(Base):
-    """Queue of tag changes to push to IMAP server on next sync."""
-
-    __tablename__ = "imap_pending_push"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    email_id: Mapped[int] = mapped_column(ForeignKey("emails.id"), index=True)
-    account_name: Mapped[str] = mapped_column(String(100))
-
-    # Change details
-    action: Mapped[str] = mapped_column(String(10))  # "add" or "remove"
-    tag_name: Mapped[str] = mapped_column(String(100))
-
-    # Metadata
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-
-    def __repr__(self) -> str:
-        return f"<ImapPendingPush {self.action} tag={self.tag_name} email={self.email_id}>"

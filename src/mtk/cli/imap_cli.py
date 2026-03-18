@@ -209,7 +209,6 @@ def imap_status(
     else:
         console.print(f"[bold]IMAP Sync Status: {name}[/bold]")
         console.print(f"  Host: {status['host']}")
-        console.print(f"  Pending pushes: {status['pending_push']}")
 
         if status["folders"]:
             for f in status["folders"]:
@@ -224,11 +223,9 @@ def imap_status(
 @imap_app.command("sync")
 def imap_sync(
     name: str = typer.Argument(..., help="Account name"),
-    pull_only: bool = typer.Option(False, "--pull-only", help="Only pull, don't push"),
-    push_only: bool = typer.Option(False, "--push-only", help="Only push, don't pull"),
     json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
-    """Sync emails with IMAP server."""
+    """Pull new emails from IMAP server."""
     from mtk.cli.main import get_db
     from mtk.imap import ImapSync
 
@@ -238,38 +235,17 @@ def imap_sync(
 
     with db.session() as session:
         sync = ImapSync(session, account, password)
-
-        if pull_only:
-            results = sync.pull_only()
-            if json:
-                print(json_lib.dumps([r.to_dict() for r in results], indent=2))
-            else:
-                for r in results:
-                    console.print(
-                        f"[green]{r.folder}: {r.new_emails} new, {r.updated_tags} updated[/green]"
-                    )
-                    if r.errors:
-                        for err in r.errors:
-                            console.print(f"  [yellow]Error: {err}[/yellow]")
-        elif push_only:
-            result = sync.push_only()
-            if json:
-                print(json_lib.dumps(result.to_dict(), indent=2))
-            else:
-                console.print(f"[green]Pushed {result.succeeded} changes[/green]")
-                if result.failed:
-                    console.print(f"[yellow]Failed: {result.failed}[/yellow]")
+        result = sync.sync()
+        if json:
+            print(json_lib.dumps(result.to_dict(), indent=2))
         else:
-            result = sync.sync()
-            if json:
-                print(json_lib.dumps(result.to_dict(), indent=2))
-            else:
-                for r in result.pull_results:
-                    console.print(f"[green]Pull {r.folder}: {r.new_emails} new[/green]")
-                if result.push_result:
-                    console.print(
-                        f"[green]Push: {result.push_result.get('succeeded', 0)} changes[/green]"
-                    )
+            for r in result.pull_results:
+                console.print(
+                    f"[green]{r.folder}: {r.new_emails} new, {r.updated_tags} updated[/green]"
+                )
+                if r.errors:
+                    for err in r.errors:
+                        console.print(f"  [yellow]Error: {err}[/yellow]")
 
 
 @imap_app.command("folders")

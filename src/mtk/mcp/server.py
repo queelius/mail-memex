@@ -29,7 +29,6 @@ TABLE_DESCRIPTIONS: dict[str, str] = {
     "email_tags": "Association table linking emails to tags (many-to-many)",
     "attachments": "Email attachment metadata (filename, type, size)",
     "imap_sync_state": "IMAP sync state per account/folder for incremental sync",
-    "imap_pending_push": "Queue of tag changes to push to IMAP on next sync",
     "emails_fts": (
         "FTS5 full-text search index on emails (subject, body_text, from_addr, from_name). "
         "Query with: SELECT * FROM emails_fts WHERE emails_fts MATCH 'search terms'"
