@@ -36,7 +36,7 @@ TABLE_DESCRIPTIONS: dict[str, str] = {
     "emails_fts": (
         "FTS5 full-text search index on emails (subject, body_text, from_addr, from_name). "
         "Query with: SELECT * FROM emails_fts WHERE emails_fts MATCH 'search terms'. "
-        "Supports prefix search (proj*), phrase search (\"exact phrase\"), and boolean operators (AND, OR, NOT)."
+        'Supports prefix search (proj*), phrase search ("exact phrase"), and boolean operators (AND, OR, NOT).'
     ),
 }
 

@@ -488,5 +488,3 @@ class TestMetadataJson:
 
         result = session.get(Email, email.id)
         assert result.metadata_json is None
-
-

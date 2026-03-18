@@ -125,7 +125,9 @@ class Tag(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-    source: Mapped[str] = mapped_column(String(20), default="mtk")  # source of tag (e.g. "mtk", "imap")
+    source: Mapped[str] = mapped_column(
+        String(20), default="mtk"
+    )  # source of tag (e.g. "mtk", "imap")
 
     # Relationships
     emails: Mapped[list[Email]] = relationship(secondary=email_tags, back_populates="tags")
@@ -178,5 +180,3 @@ class ImapSyncState(Base):
 
     def __repr__(self) -> str:
         return f"<ImapSyncState {self.account_name}/{self.folder} uid={self.last_uid}>"
-
-

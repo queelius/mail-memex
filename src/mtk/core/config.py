@@ -147,4 +147,3 @@ class ImapAccountConfig:
             "folders": self.folders,
             "oauth2": self.oauth2,
         }
-

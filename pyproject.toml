@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mtk"
-version = "0.3.0"
+version = "0.4.0"
 description = "Mail Toolkit - Personal email archive management with full-text search and SQL/MCP access"
 readme = "README.md"
 license = "MIT"

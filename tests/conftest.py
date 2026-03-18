@@ -558,5 +558,3 @@ class EmailFactory:
 def email_factory(session: Session) -> EmailFactory:
     """Get an EmailFactory instance."""
     return EmailFactory(session)
-
-
