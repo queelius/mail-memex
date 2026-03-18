@@ -230,6 +230,8 @@ class SearchEngine:
 
         if query.from_addr:
             conditions.append(Email.from_addr.ilike(f"%{query.from_addr}%"))
+        if query.to_addr:
+            conditions.append(Email.to_addrs.ilike(f"%{query.to_addr}%"))
         if query.subject:
             conditions.append(Email.subject.ilike(f"%{query.subject}%"))
         if query.date_from:
@@ -319,8 +321,9 @@ class SearchEngine:
         if query.from_addr:
             conditions.append(Email.from_addr.ilike(f"%{query.from_addr}%"))
 
-        # To address (need to search recipients - for now search raw headers)
-        # TODO: Implement proper recipient search
+        # To address
+        if query.to_addr:
+            conditions.append(Email.to_addrs.ilike(f"%{query.to_addr}%"))
 
         # Subject
         if query.subject:

@@ -76,6 +76,26 @@ class TestSearchEngine:
             for r in results:
                 assert "alice" in r.email.from_addr.lower()
 
+    def test_search_by_to(self, populated_db) -> None:
+        """Test that to: operator filters by to_addrs column."""
+        with populated_db.session() as session:
+            engine = SearchEngine(session)
+            # email1 has to_addrs="bob@example.com" (set in populated_db fixture)
+            results = engine.search("to:bob@example.com")
+
+            assert len(results) > 0
+            for r in results:
+                assert r.email.to_addrs is not None
+                assert "bob@example.com" in r.email.to_addrs
+
+    def test_parse_to_operator(self) -> None:
+        """Test that to: operator is parsed into to_addr field."""
+        engine = SearchEngine(None)
+        query = engine.parse_query("to:bob@example.com project")
+
+        assert query.to_addr == "bob@example.com"
+        assert query.text == "project"
+
     def test_search_date_range(self, populated_db) -> None:
         """Test searching by date range."""
         with populated_db.session() as session:

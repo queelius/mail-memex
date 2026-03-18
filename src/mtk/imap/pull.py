@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import email as email_lib
+import email.utils as email_utils
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -181,6 +182,14 @@ class PullSync:
             existing.imap_account = self.account.name
             existing.imap_folder = folder
 
+            # Update recipient columns
+            to_list = email_utils.getaddresses([msg.get("To", "")])
+            cc_list = email_utils.getaddresses([msg.get("Cc", "")])
+            bcc_list = email_utils.getaddresses([msg.get("Bcc", "")])
+            existing.to_addrs = ",".join(addr for _, addr in to_list if addr) or None
+            existing.cc_addrs = ",".join(addr for _, addr in cc_list if addr) or None
+            existing.bcc_addrs = ",".join(addr for _, addr in bcc_list if addr) or None
+
             # Update tags from flags
             flags = data.get(b"FLAGS", ())
             flag_strs = [f.decode() if isinstance(f, bytes) else str(f) for f in flags]
@@ -211,6 +220,10 @@ class PullSync:
             except Exception:
                 date_tuple = datetime.utcnow()
 
+            to_list = email_utils.getaddresses([msg.get("To", "")])
+            cc_list = email_utils.getaddresses([msg.get("Cc", "")])
+            bcc_list = email_utils.getaddresses([msg.get("Bcc", "")])
+
             new_email = Email(
                 message_id=message_id,
                 from_addr=from_addr or "unknown@unknown",
@@ -224,6 +237,9 @@ class PullSync:
                 imap_uid=uid,
                 imap_account=self.account.name,
                 imap_folder=folder,
+                to_addrs=",".join(addr for _, addr in to_list if addr) or None,
+                cc_addrs=",".join(addr for _, addr in cc_list if addr) or None,
+                bcc_addrs=",".join(addr for _, addr in bcc_list if addr) or None,
             )
             self.session.add(new_email)
             self.session.flush()
