@@ -69,6 +69,14 @@ class MboxExporter(Exporter):
         else:
             msg["From"] = from_addr
 
+        # Recipient headers
+        if email_data.get("to_addrs"):
+            msg["To"] = email_data["to_addrs"]
+        if email_data.get("cc_addrs"):
+            msg["Cc"] = email_data["cc_addrs"]
+        if email_data.get("bcc_addrs"):
+            msg["Bcc"] = email_data["bcc_addrs"]
+
         # Date
         date = email_data.get("date")
         if isinstance(date, datetime):

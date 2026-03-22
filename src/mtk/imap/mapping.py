@@ -13,8 +13,6 @@ _IMAP_FLAG_TO_TAG: dict[str, str] = {
     "\\Deleted": "deleted",
 }
 
-_TAG_TO_IMAP_FLAG: dict[str, str] = {v: k for k, v in _IMAP_FLAG_TO_TAG.items()}
-
 # Gmail label → mtk tag mappings
 _GMAIL_LABEL_TO_TAG: dict[str, str] = {
     "\\Inbox": "inbox",
@@ -30,8 +28,6 @@ _GMAIL_LABEL_TO_TAG: dict[str, str] = {
     "CATEGORY_UPDATES": "updates",
     "CATEGORY_FORUMS": "forums",
 }
-
-_TAG_TO_GMAIL_LABEL: dict[str, str] = {v: k for k, v in _GMAIL_LABEL_TO_TAG.items()}
 
 
 @dataclass
@@ -81,55 +77,3 @@ class TagMapper:
                     tags.add(label_str.lower().replace(" ", "-"))
 
         return tags
-
-    def tags_to_imap_flags(self, tags: set[str]) -> list[str]:
-        """Convert mtk tags back to IMAP flags.
-
-        Only returns flags that have known IMAP flag equivalents.
-
-        Args:
-            tags: Set of mtk tag names.
-
-        Returns:
-            List of IMAP flag strings.
-        """
-        flags = []
-        reverse_custom = {v: k for k, v in self.custom_mappings.items()}
-
-        for tag in tags:
-            flag = _TAG_TO_IMAP_FLAG.get(tag)
-            if flag:
-                flags.append(flag)
-            custom_flag = reverse_custom.get(tag)
-            if custom_flag:
-                flags.append(custom_flag)
-
-        return flags
-
-    def tags_to_gmail_labels(self, tags: set[str]) -> list[str]:
-        """Convert mtk tags back to Gmail labels.
-
-        Args:
-            tags: Set of mtk tag names.
-
-        Returns:
-            List of Gmail label strings.
-        """
-        labels = []
-        for tag in tags:
-            label = _TAG_TO_GMAIL_LABEL.get(tag)
-            if label:
-                labels.append(label)
-        return labels
-
-    def diff_tags(self, current_tags: set[str], new_tags: set[str]) -> tuple[set[str], set[str]]:
-        """Compute tag additions and removals.
-
-        Args:
-            current_tags: Current set of tags.
-            new_tags: Desired set of tags.
-
-        Returns:
-            Tuple of (tags_to_add, tags_to_remove).
-        """
-        return new_tags - current_tags, current_tags - new_tags

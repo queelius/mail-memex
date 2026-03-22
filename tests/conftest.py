@@ -181,94 +181,6 @@ JVBERi0xLjQKJeLjz9MKMyAwIG9iago8PC9UeXBlIC9QYWdlCi9QYXJlbnQgMSAwIFI=
 
 
 # =============================================================================
-# Maildir Fixtures
-# =============================================================================
-
-
-@pytest.fixture
-def sample_maildir(tmp_dir: Path) -> Path:
-    """Create a sample Maildir structure with test emails."""
-    maildir = tmp_dir / "maildir"
-    (maildir / "cur").mkdir(parents=True)
-    (maildir / "new").mkdir()
-    (maildir / "tmp").mkdir()
-
-    # Email 1: Read message in cur/
-    email1 = b"""From: alice@example.com
-To: bob@example.com
-Subject: Hello Bob
-Date: Mon, 15 Jan 2024 10:00:00 -0500
-Message-ID: <email1@example.com>
-
-Hello Bob!
-
-How are you doing?
-
-Best,
-Alice
-"""
-    (maildir / "cur" / "1705330800.M001P1234:2,S").write_bytes(email1)
-
-    # Email 2: Unread message in new/
-    email2 = b"""From: bob@example.com
-To: alice@example.com
-Subject: Re: Hello Bob
-Date: Mon, 15 Jan 2024 11:00:00 -0500
-Message-ID: <email2@example.com>
-In-Reply-To: <email1@example.com>
-References: <email1@example.com>
-
-Hi Alice!
-
-I'm doing great, thanks for asking.
-
-Cheers,
-Bob
-"""
-    (maildir / "new" / "1705334400.M002P1234").write_bytes(email2)
-
-    # Email 3: Another read message
-    email3 = b"""From: charlie@example.com
-To: alice@example.com, bob@example.com
-Cc: dave@example.com
-Subject: Team meeting
-Date: Mon, 15 Jan 2024 14:00:00 -0500
-Message-ID: <email3@example.com>
-
-Hi team,
-
-Let's schedule a meeting for tomorrow.
-
-Charlie
-"""
-    (maildir / "cur" / "1705345200.M003P1234:2,RS").write_bytes(email3)
-
-    return maildir
-
-
-@pytest.fixture
-def sample_maildir_with_subfolders(sample_maildir: Path) -> Path:
-    """Maildir with .folder subfolders (Maildir++ format)."""
-    # Create .Sent subfolder
-    sent = sample_maildir / ".Sent"
-    (sent / "cur").mkdir(parents=True)
-    (sent / "new").mkdir()
-    (sent / "tmp").mkdir()
-
-    sent_email = b"""From: alice@example.com
-To: external@company.com
-Subject: Sent message
-Date: Mon, 15 Jan 2024 16:00:00 -0500
-Message-ID: <sent1@example.com>
-
-This is a sent message.
-"""
-    (sent / "cur" / "1705352400.M004P1234:2,S").write_bytes(sent_email)
-
-    return sample_maildir
-
-
-# =============================================================================
 # Mbox Fixtures
 # =============================================================================
 
@@ -502,8 +414,6 @@ def mock_config(tmp_dir: Path):
         config.default_config_dir.return_value = tmp_dir / ".config" / "mtk"
         config.default_data_dir.return_value = tmp_dir / ".local" / "share" / "mtk"
         config.db_path = tmp_dir / ".local" / "share" / "mtk" / "mtk.db"
-        config.maildir = None
-        config.auto_sync = True
         mock_config_cls.load.return_value = config
         mock_config_cls.return_value = config
         yield config

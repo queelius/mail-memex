@@ -2,7 +2,7 @@
 
 These tests define the expected behavior of:
 - Database class: connection management, sessions, transactions
-- ORM models: Email, Thread, Tag, Attachment, Annotation, Collection, etc.
+- ORM models: Email, Thread, Tag, Attachment, ImapSyncState
 - Relationships: foreign keys, many-to-many, cascade behavior
 - Constraints: unique, indexes, defaults
 """

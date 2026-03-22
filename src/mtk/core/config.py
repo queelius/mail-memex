@@ -16,11 +16,7 @@ class MtkConfig:
     """mtk configuration."""
 
     # Paths
-    maildir: Path | None = None
     db_path: Path | None = None
-
-    # Behavior
-    auto_sync: bool = True
 
     # IMAP accounts
     imap_accounts: dict[str, ImapAccountConfig] = field(default_factory=dict)
@@ -61,12 +57,8 @@ class MtkConfig:
         """Create config from dictionary."""
         config = cls()
 
-        if data.get("maildir"):
-            config.maildir = Path(data["maildir"]).expanduser()
         if data.get("db_path"):
             config.db_path = Path(data["db_path"]).expanduser()
-
-        config.auto_sync = data.get("auto_sync", True)
 
         # IMAP accounts
         for name, acct_data in data.get("imap_accounts", {}).items():
@@ -77,9 +69,7 @@ class MtkConfig:
     def to_dict(self) -> dict[str, Any]:
         """Convert config to dictionary for serialization."""
         data: dict[str, Any] = {
-            "maildir": str(self.maildir) if self.maildir else None,
             "db_path": str(self.db_path) if self.db_path else None,
-            "auto_sync": self.auto_sync,
         }
         if self.imap_accounts:
             data["imap_accounts"] = {

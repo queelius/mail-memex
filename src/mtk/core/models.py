@@ -8,7 +8,7 @@ Core models for email archival:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     Column,
@@ -65,7 +65,7 @@ class Email(Base):
     body_html: Mapped[str | None] = mapped_column(Text)
     body_preview: Mapped[str | None] = mapped_column(String(500))
 
-    # File reference (path relative to maildir)
+    # File reference (path to source email file)
     file_path: Mapped[str | None] = mapped_column(String(1000))
 
     # IMAP tracking
@@ -77,8 +77,10 @@ class Email(Base):
     metadata_json: Mapped[str | None] = mapped_column(Text)
 
     # Metadata
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
+    updated_at: Mapped[datetime] = mapped_column(
+        default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
+    )
 
     # Relationships
     thread: Mapped[Thread | None] = relationship(back_populates="emails")
@@ -108,8 +110,10 @@ class Thread(Base):
     last_date: Mapped[datetime | None] = mapped_column()
 
     # Metadata
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
+    updated_at: Mapped[datetime] = mapped_column(
+        default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
+    )
 
     # Relationships
     emails: Mapped[list[Email]] = relationship(back_populates="thread")

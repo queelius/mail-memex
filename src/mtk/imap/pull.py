@@ -5,7 +5,7 @@ from __future__ import annotations
 import email as email_lib
 import email.utils as email_utils
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
@@ -108,7 +108,7 @@ class PullSync:
         uids = [uid for uid in uids if uid > state.last_uid]
 
         if not uids:
-            state.last_sync = datetime.utcnow()
+            state.last_sync = datetime.now(UTC)
             self.session.commit()
             return result
 
@@ -138,7 +138,7 @@ class PullSync:
         if uids:
             state.last_uid = max(uids)
         state.message_count = result.new_emails
-        state.last_sync = datetime.utcnow()
+        state.last_sync = datetime.now(UTC)
 
         # Update HIGHESTMODSEQ if server supports CONDSTORE
         modseq = select_info.get(b"HIGHESTMODSEQ")
@@ -218,7 +218,7 @@ class PullSync:
             try:
                 date_tuple = email_lib.utils.parsedate_to_datetime(date_str)
             except Exception:
-                date_tuple = datetime.utcnow()
+                date_tuple = datetime.now(UTC)
 
             to_list = email_utils.getaddresses([msg.get("To", "")])
             cc_list = email_utils.getaddresses([msg.get("Cc", "")])

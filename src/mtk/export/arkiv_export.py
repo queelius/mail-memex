@@ -35,7 +35,7 @@ class ArkivExporter:
     def _email_to_record(self, email: Email) -> dict:
         """Convert an Email to an arkiv record.
 
-        Denormalizes tags, attachment info, and person data into metadata.
+        Denormalizes tags and attachment info into metadata.
         """
         record: dict = {
             "mimetype": "message/rfc822",

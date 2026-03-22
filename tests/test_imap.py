@@ -147,13 +147,6 @@ class TestTagMapper:
         assert "read" in tags
         assert len(tags) == 1
 
-    def test_tags_to_imap_flags(self) -> None:
-        """mtk tags should map back to IMAP flags."""
-        mapper = TagMapper()
-        flags = mapper.tags_to_imap_flags({"read", "flagged"})
-        assert "\\Seen" in flags
-        assert "\\Flagged" in flags
-
     def test_gmail_labels_to_tags(self) -> None:
         """Gmail labels should map to mtk tags."""
         mapper = TagMapper(is_gmail=True)
@@ -168,26 +161,6 @@ class TestTagMapper:
         mapper = TagMapper(is_gmail=True)
         tags = mapper.imap_to_tags([], ["MyCustomLabel"])
         assert "mycustomlabel" in tags
-
-    def test_tags_to_gmail_labels(self) -> None:
-        """mtk tags should map back to Gmail labels."""
-        mapper = TagMapper(is_gmail=True)
-        labels = mapper.tags_to_gmail_labels({"inbox", "starred", "important"})
-        assert "\\Inbox" in labels
-        assert "\\Starred" in labels
-        assert "\\Important" in labels
-
-    def test_diff_tags(self) -> None:
-        """diff_tags should compute additions and removals."""
-        mapper = TagMapper()
-        add, remove = mapper.diff_tags(
-            current_tags={"read", "flagged"},
-            new_tags={"read", "replied"},
-        )
-        assert "replied" in add
-        assert "flagged" in remove
-        assert "read" not in add
-        assert "read" not in remove
 
     def test_bytes_flags(self) -> None:
         """Should handle bytes flags (as returned by imapclient)."""
