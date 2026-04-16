@@ -56,3 +56,33 @@ class TestThreadSoftDelete:
 
         result = session.get(Thread, thread.id)
         assert result.archived_at is None
+
+
+def test_search_excludes_archived_emails(session) -> None:
+    """SearchEngine should not return archived emails."""
+    from mail_memex.search.engine import SearchEngine
+
+    active = Email(
+        message_id="active@example.com",
+        from_addr="a@b.com",
+        subject="Active email about projects",
+        body_text="This email is active and searchable.",
+        date=datetime(2024, 1, 1),
+    )
+    archived = Email(
+        message_id="archived@example.com",
+        from_addr="a@b.com",
+        subject="Archived email about projects",
+        body_text="This email is archived and hidden.",
+        date=datetime(2024, 1, 2),
+        archived_at=datetime.now(UTC),
+    )
+    session.add_all([active, archived])
+    session.commit()
+
+    engine = SearchEngine(session)
+    results = engine.search("projects")
+    message_ids = [r.email.message_id for r in results]
+
+    assert "active@example.com" in message_ids
+    assert "archived@example.com" not in message_ids

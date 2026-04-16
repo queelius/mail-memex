@@ -227,6 +227,7 @@ class SearchEngine:
 
         # Build field-filter conditions
         conditions = [Email.id.in_(fts_email_ids)]
+        conditions.append(Email.archived_at.is_(None))
 
         if query.from_addr:
             conditions.append(Email.from_addr.ilike(f"%{query.from_addr}%"))
@@ -305,6 +306,7 @@ class SearchEngine:
     ) -> list[SearchResult]:
         """Perform keyword-based search using SQLite LIKE (fallback)."""
         conditions = []
+        conditions.append(Email.archived_at.is_(None))
 
         # Free text search (subject + body)
         if query.text:
