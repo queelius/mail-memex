@@ -4,10 +4,12 @@ Core models for email archival:
 - Email, Thread, Attachment - Core email data
 - Tag, email_tags - Organization and tagging (many-to-many)
 - ImapSyncState - IMAP incremental sync tracking
+- Marginalia, MarginaliaTarget - Free-form notes attached via URIs
 """
 
 from __future__ import annotations
 
+import uuid as _uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import (
@@ -82,6 +84,9 @@ class Email(Base):
         default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
     )
 
+    # Soft delete
+    archived_at: Mapped[datetime | None] = mapped_column(default=None)
+
     # Relationships
     thread: Mapped[Thread | None] = relationship(back_populates="emails")
     attachments: Mapped[list[Attachment]] = relationship(
@@ -114,6 +119,9 @@ class Thread(Base):
     updated_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
     )
+
+    # Soft delete
+    archived_at: Mapped[datetime | None] = mapped_column(default=None)
 
     # Relationships
     emails: Mapped[list[Email]] = relationship(back_populates="thread")
@@ -184,3 +192,49 @@ class ImapSyncState(Base):
 
     def __repr__(self) -> str:
         return f"<ImapSyncState {self.account_name}/{self.folder} uid={self.last_uid}>"
+
+
+class MarginaliaTarget(Base):
+    """Join table linking marginalia to target URIs."""
+
+    __tablename__ = "marginalia_targets"
+
+    marginalia_id: Mapped[int] = mapped_column(
+        ForeignKey("marginalia.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    target_uri: Mapped[str] = mapped_column(Text, primary_key=True)
+
+    marginalia: Mapped[Marginalia] = relationship(back_populates="targets")
+
+    def __repr__(self) -> str:
+        return f"<MarginaliaTarget {self.target_uri}>"
+
+
+class Marginalia(Base):
+    """Free-form notes attached to email/thread records via URIs."""
+
+    __tablename__ = "marginalia"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[str] = mapped_column(
+        String(32), unique=True, index=True, default=lambda: _uuid.uuid4().hex
+    )
+    content: Mapped[str] = mapped_column(Text)
+    category: Mapped[str | None] = mapped_column(String(100))
+    color: Mapped[str | None] = mapped_column(String(20))
+    pinned: Mapped[bool] = mapped_column(default=False)
+
+    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
+    updated_at: Mapped[datetime] = mapped_column(
+        default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(default=None)
+
+    targets: Mapped[list[MarginaliaTarget]] = relationship(
+        back_populates="marginalia", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        preview = self.content[:40] if self.content else ""
+        return f"<Marginalia {self.uuid[:8]}... '{preview}'>"
