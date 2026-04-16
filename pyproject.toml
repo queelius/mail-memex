@@ -34,7 +34,7 @@ dependencies = [
 
 [project.optional-dependencies]
 mcp = [
-    "mcp>=1.0.0",
+    "fastmcp>=2.0.0",
 ]
 imap = [
     "imapclient>=3.0.0",

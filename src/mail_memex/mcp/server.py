@@ -1,7 +1,7 @@
-"""MCP server with pure-SQL interface: run_sql + get_schema.
+"""MCP server for mail-memex using FastMCP.
 
-Exposes the mail-memex SQLite database via two tools, letting LLMs query
-and (optionally) mutate the archive using plain SQL.
+Contract tools: execute_sql, get_schema, get_record.
+Domain tools: search_emails, marginalia CRUD (7 tools).
 """
 
 from __future__ import annotations
@@ -12,8 +12,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from mcp.server import Server
-from mcp.types import TextContent, Tool
+from fastmcp import FastMCP
 
 from mail_memex.core.config import MtkConfig
 from mail_memex.core.database import Database
@@ -26,9 +25,13 @@ TABLE_DESCRIPTIONS: dict[str, str] = {
     "emails": (
         "Email messages with headers, content, and metadata. "
         "to_addrs, cc_addrs, bcc_addrs are comma-separated address strings. "
-        "metadata_json stores flexible JSON extras (e.g. Gmail labels) queryable via json_extract(metadata_json, '$.key')."
+        "metadata_json stores flexible JSON extras (e.g. Gmail labels) queryable via json_extract(metadata_json, '$.key'). "
+        "archived_at is NULL for live records; set to a timestamp for soft-deleted records."
     ),
-    "threads": "Email threads/conversations grouping related emails by thread_id.",
+    "threads": (
+        "Email threads/conversations grouping related emails by thread_id. "
+        "archived_at is NULL for live records; set to a timestamp for soft-deleted records."
+    ),
     "tags": "Tags applied to emails. source='mail-memex' for locally created tags, 'imap' for IMAP-synced tags.",
     "email_tags": "Association table linking emails to tags (many-to-many join via email_id and tag_id).",
     "attachments": "Email attachment metadata (filename, content_type, size). Content is not stored — retrieve from original file.",
@@ -37,6 +40,15 @@ TABLE_DESCRIPTIONS: dict[str, str] = {
         "FTS5 full-text search index on emails (subject, body_text, from_addr, from_name). "
         "Query with: SELECT * FROM emails_fts WHERE emails_fts MATCH 'search terms'. "
         'Supports prefix search (proj*), phrase search ("exact phrase"), and boolean operators (AND, OR, NOT).'
+    ),
+    "marginalia": (
+        "Free-form notes attached to email/thread records via URIs. "
+        "Use marginalia tools (create/list/get/update/delete/restore) rather than raw SQL. "
+        "archived_at is NULL for live records; set to a timestamp for soft-deleted records."
+    ),
+    "marginalia_targets": (
+        "Join table linking marginalia to target URIs (mail-memex://email/<id>, etc.). "
+        "Managed automatically by marginalia tools."
     ),
 }
 
@@ -49,40 +61,8 @@ QUERY_TIPS: list[str] = [
     "Count by sender: SELECT from_addr, COUNT(*) AS cnt FROM emails GROUP BY from_addr ORDER BY cnt DESC LIMIT 20",
     "Recipient search (to/cc/bcc): SELECT * FROM emails WHERE to_addrs LIKE '%alice@example.com%'",
     "JSON metadata query: SELECT * FROM emails WHERE json_extract(metadata_json, '$.source') = 'gmail'",
-]
-
-# ---------------------------------------------------------------------------
-# Tool definitions (JSON Schema for MCP input validation)
-# ---------------------------------------------------------------------------
-
-TOOL_DEFINITIONS: list[dict[str, Any]] = [
-    {
-        "name": "get_schema",
-        "description": "Get the full database schema as JSON, including table DDL, column details, descriptions, and query tips.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {},
-        },
-    },
-    {
-        "name": "run_sql",
-        "description": "Execute a SQL query against the mail-memex email archive database. Returns JSON array of row objects for SELECT, or affected_rows for writes.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "sql": {
-                    "type": "string",
-                    "description": "SQL query to execute",
-                },
-                "readonly": {
-                    "type": "boolean",
-                    "description": "If true (default), block INSERT/UPDATE/DELETE/REPLACE. DDL is always blocked.",
-                    "default": True,
-                },
-            },
-            "required": ["sql"],
-        },
-    },
+    "Soft-deleted records: WHERE archived_at IS NULL (default filters) or WHERE archived_at IS NOT NULL (show deleted)",
+    "Marginalia: use marginalia tools (create/list/get/update/delete/restore) rather than raw SQL",
 ]
 
 # ---------------------------------------------------------------------------
@@ -98,18 +78,17 @@ _WRITE_PATTERN = re.compile(r"\b(INSERT|UPDATE|DELETE|REPLACE)\b", re.IGNORECASE
 # ---------------------------------------------------------------------------
 
 
-def get_schema(session: Any) -> str:
+def get_schema_impl(session: Any) -> str:
     """Return full database schema as a JSON string.
 
     Reads sqlite_master for DDL, PRAGMA table_info for columns on regular
     tables, and includes human-readable descriptions and query tips.
     """
     conn = session.connection()
-    raw = conn.connection.driver_connection  # unwrap to raw dbapi connection
+    raw = conn.connection.driver_connection
 
     tables: dict[str, Any] = {}
 
-    # Get all tables and views from sqlite_master
     cursor = raw.execute(
         "SELECT type, name, sql FROM sqlite_master "
         "WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' "
@@ -122,7 +101,6 @@ def get_schema(session: Any) -> str:
             "description": TABLE_DESCRIPTIONS.get(name, ""),
         }
 
-        # Add column details for regular tables (not views, not FTS virtual tables)
         if row_type == "table" and not (ddl and "VIRTUAL TABLE" in ddl.upper()):
             col_cursor = raw.execute(f"PRAGMA table_info('{name}')")
             columns = []
@@ -147,7 +125,7 @@ def get_schema(session: Any) -> str:
     return json.dumps(result)
 
 
-def run_sql(session: Any, sql: str, readonly: bool = True) -> str:
+def execute_sql_impl(session: Any, sql: str, readonly: bool = True) -> str:
     """Execute SQL and return results as a JSON string.
 
     For SELECT/PRAGMA: returns a JSON array of row objects.
@@ -155,13 +133,11 @@ def run_sql(session: Any, sql: str, readonly: bool = True) -> str:
     On error: returns {"error": "message"}.
     DDL (DROP/ALTER/CREATE/ATTACH/DETACH) is always blocked.
     """
-    # Always block DDL
     if _DDL_PATTERN.search(sql):
         return json.dumps(
             {"error": "DDL statements (DROP/ALTER/CREATE/ATTACH/DETACH) are not allowed"}
         )
 
-    # Block writes in readonly mode
     if readonly and _WRITE_PATTERN.search(sql):
         return json.dumps(
             {
@@ -171,25 +147,117 @@ def run_sql(session: Any, sql: str, readonly: bool = True) -> str:
 
     try:
         conn = session.connection()
-        raw = conn.connection.driver_connection  # unwrap to raw dbapi connection
+        raw = conn.connection.driver_connection
         cursor = raw.execute(sql)
 
-        # If it's a write operation (non-readonly), commit and return affected rows
         if _WRITE_PATTERN.search(sql):
             raw.commit()
             return json.dumps({"affected_rows": cursor.rowcount})
 
-        # SELECT or PRAGMA — return rows as JSON array of dicts
         if cursor.description:
             columns = [desc[0] for desc in cursor.description]
             rows = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
             return json.dumps(rows, default=str)
 
-        # Statement produced no results (e.g., empty PRAGMA)
         return json.dumps([])
 
     except Exception as e:
         return json.dumps({"error": str(e)})
+
+
+def get_record_impl(session: Any, kind: str, record_id: str) -> str:
+    """Resolve a mail-memex record by kind and ID.
+
+    kind="email": lookup Email by message_id.
+    kind="thread": lookup Thread by thread_id.
+    kind="marginalia": lookup Marginalia by uuid.
+    Returns archived (soft-deleted) records too.
+    """
+    _VALID_KINDS = ("email", "thread", "marginalia")
+
+    if kind not in _VALID_KINDS:
+        return json.dumps(
+            {"error": f"Unknown kind: {kind}. Valid: {', '.join(_VALID_KINDS)}"}
+        )
+
+    if kind == "email":
+        from mail_memex.core.models import Email
+
+        email = session.query(Email).filter_by(message_id=record_id).first()
+        if email is None:
+            return json.dumps({"error": "NOT_FOUND"})
+        return json.dumps(
+            {
+                "message_id": email.message_id,
+                "from_addr": email.from_addr,
+                "from_name": email.from_name,
+                "to_addrs": email.to_addrs,
+                "subject": email.subject,
+                "date": email.date.isoformat() if email.date else None,
+                "body_preview": email.body_preview,
+                "thread_id": email.thread_id,
+                "archived_at": email.archived_at.isoformat() if email.archived_at else None,
+            },
+            default=str,
+        )
+
+    if kind == "thread":
+        from mail_memex.core.models import Thread
+
+        thread = session.query(Thread).filter_by(thread_id=record_id).first()
+        if thread is None:
+            return json.dumps({"error": "NOT_FOUND"})
+        return json.dumps(
+            {
+                "thread_id": thread.thread_id,
+                "subject": thread.subject,
+                "email_count": thread.email_count,
+                "first_date": thread.first_date.isoformat() if thread.first_date else None,
+                "last_date": thread.last_date.isoformat() if thread.last_date else None,
+                "archived_at": thread.archived_at.isoformat() if thread.archived_at else None,
+            },
+            default=str,
+        )
+
+    # kind == "marginalia"
+    from mail_memex.core.marginalia import get_marginalia
+
+    record = get_marginalia(session, record_id)
+    if record is None:
+        return json.dumps({"error": "NOT_FOUND"})
+    return json.dumps(record, default=str)
+
+
+def search_emails_impl(session: Any, query: str, limit: int = 50) -> str:
+    """Search emails using the SearchEngine and return JSON results.
+
+    Wraps SearchEngine.search() and serializes results to a list of
+    email summary dicts.
+    """
+    from mail_memex.search.engine import SearchEngine
+
+    engine = SearchEngine(session)
+    results = engine.search(query, limit=limit)
+
+    output = []
+    for sr in results:
+        e = sr.email
+        output.append(
+            {
+                "message_id": e.message_id,
+                "from_addr": e.from_addr,
+                "from_name": e.from_name,
+                "subject": e.subject,
+                "date": e.date.isoformat() if e.date else None,
+                "to_addrs": e.to_addrs,
+                "body_preview": e.body_preview,
+                "thread_id": e.thread_id,
+                "score": sr.score,
+                "match_type": sr.match_type,
+            }
+        )
+
+    return json.dumps(output, default=str)
 
 
 # ---------------------------------------------------------------------------
@@ -210,41 +278,179 @@ def _get_db_path() -> Path:
     return MtkConfig.default_data_dir() / "mail-memex.db"
 
 
-def create_server() -> Server:
-    """Create and configure the MCP server with run_sql and get_schema tools."""
-    server = Server("mail-memex")
+def create_server() -> FastMCP:
+    """Create and configure the FastMCP server with all tools."""
+    mcp = FastMCP(
+        "mail-memex",
+        instructions=(
+            "mail-memex is a personal email archive with full-text search. "
+            "Use get_schema to discover tables, execute_sql for SQL queries, "
+            "get_record to resolve email/thread/marginalia URIs, and "
+            "search_emails for Gmail-like query syntax."
+        ),
+    )
 
     db_path = _get_db_path()
     db = Database(db_path)
     db.create_tables()
 
-    @server.list_tools()
-    async def handle_list_tools() -> list[Tool]:
-        return [
-            Tool(
-                name=td["name"],
-                description=td["description"],
-                inputSchema=td["inputSchema"],
+    # ----- Contract tools -----
+
+    @mcp.tool(
+        name="get_schema",
+        description="Get the full database schema as JSON, including table DDL, column details, descriptions, and query tips.",
+    )
+    def get_schema_tool() -> str:
+        with db.session() as session:
+            return get_schema_impl(session)
+
+    @mcp.tool(
+        name="execute_sql",
+        description="Execute a SQL query against the mail-memex email archive database. Returns JSON array of row objects for SELECT, or affected_rows for writes.",
+    )
+    def execute_sql_tool(sql: str, readonly: bool = True) -> str:
+        with db.session() as session:
+            return execute_sql_impl(session, sql, readonly=readonly)
+
+    @mcp.tool(
+        name="get_record",
+        description=(
+            "Resolve a mail-memex record by kind and ID. "
+            "kind: 'email' (by message_id), 'thread' (by thread_id), 'marginalia' (by uuid). "
+            "Returns the record as JSON, including soft-deleted records."
+        ),
+    )
+    def get_record_tool(kind: str, record_id: str) -> str:
+        with db.session() as session:
+            return get_record_impl(session, kind, record_id)
+
+    # ----- Domain tools -----
+
+    @mcp.tool(
+        name="search_emails",
+        description=(
+            "Search emails using Gmail-like query syntax. "
+            "Operators: from:, to:, subject:, after:YYYY-MM-DD, before:YYYY-MM-DD, "
+            "tag:, has:attachment, thread:. Free text searches subject and body."
+        ),
+    )
+    def search_emails_tool(query: str, limit: int = 50) -> str:
+        with db.session() as session:
+            return search_emails_impl(session, query, limit=limit)
+
+    # ----- Marginalia tools -----
+
+    @mcp.tool(
+        name="create_marginalia",
+        description="Create a new marginalia note attached to one or more target URIs (e.g. mail-memex://email/<message_id>).",
+    )
+    def create_marginalia_tool(
+        target_uris: list[str],
+        content: str,
+        category: str | None = None,
+        color: str | None = None,
+        pinned: bool = False,
+    ) -> str:
+        from mail_memex.core.marginalia import create_marginalia
+
+        with db.session() as session:
+            result = create_marginalia(
+                session,
+                target_uris=target_uris,
+                content=content,
+                category=category,
+                color=color,
+                pinned=pinned,
             )
-            for td in TOOL_DEFINITIONS
-        ]
+            session.commit()
+            return json.dumps(result, default=str)
 
-    @server.call_tool()
-    async def handle_call_tool(name: str, arguments: dict | None) -> list[TextContent]:
-        arguments = arguments or {}
+    @mcp.tool(
+        name="list_marginalia",
+        description="List marginalia notes, optionally filtered by target URI. Returns newest first.",
+    )
+    def list_marginalia_tool(
+        target_uri: str | None = None,
+        include_archived: bool = False,
+        limit: int = 50,
+    ) -> str:
+        from mail_memex.core.marginalia import list_marginalia
 
-        if name == "get_schema":
-            with db.session() as session:
-                result = get_schema(session)
-            return [TextContent(type="text", text=result)]
+        with db.session() as session:
+            results = list_marginalia(
+                session,
+                target_uri=target_uri,
+                include_archived=include_archived,
+                limit=limit,
+            )
+            return json.dumps(results, default=str)
 
-        if name == "run_sql":
-            sql_str = arguments.get("sql", "")
-            readonly = arguments.get("readonly", True)
-            with db.session() as session:
-                result = run_sql(session, sql_str, readonly=readonly)
-            return [TextContent(type="text", text=result)]
+    @mcp.tool(
+        name="get_marginalia",
+        description="Fetch a single marginalia note by its UUID.",
+    )
+    def get_marginalia_tool(uuid: str) -> str:
+        from mail_memex.core.marginalia import get_marginalia
 
-        return [TextContent(type="text", text=f"Unknown tool: {name}")]
+        with db.session() as session:
+            result = get_marginalia(session, uuid)
+            if result is None:
+                return json.dumps({"error": "NOT_FOUND"})
+            return json.dumps(result, default=str)
 
-    return server
+    @mcp.tool(
+        name="update_marginalia",
+        description="Update fields on an existing marginalia note. Only provided fields are changed.",
+    )
+    def update_marginalia_tool(
+        uuid: str,
+        content: str | None = None,
+        category: str | None = None,
+        color: str | None = None,
+        pinned: bool | None = None,
+    ) -> str:
+        from mail_memex.core.marginalia import update_marginalia
+
+        with db.session() as session:
+            result = update_marginalia(
+                session,
+                uuid=uuid,
+                content=content,
+                category=category,
+                color=color,
+                pinned=pinned,
+            )
+            if result is None:
+                return json.dumps({"error": "NOT_FOUND"})
+            session.commit()
+            return json.dumps(result, default=str)
+
+    @mcp.tool(
+        name="delete_marginalia",
+        description="Delete a marginalia note. Soft delete by default (sets archived_at). Pass hard=true to permanently remove.",
+    )
+    def delete_marginalia_tool(uuid: str, hard: bool = False) -> str:
+        from mail_memex.core.marginalia import delete_marginalia
+
+        with db.session() as session:
+            result = delete_marginalia(session, uuid=uuid, hard=hard)
+            if result is None:
+                return json.dumps({"error": "NOT_FOUND"})
+            session.commit()
+            return json.dumps(result, default=str)
+
+    @mcp.tool(
+        name="restore_marginalia",
+        description="Undo a soft delete on a marginalia note by clearing archived_at.",
+    )
+    def restore_marginalia_tool(uuid: str) -> str:
+        from mail_memex.core.marginalia import restore_marginalia
+
+        with db.session() as session:
+            result = restore_marginalia(session, uuid=uuid)
+            if result is None:
+                return json.dumps({"error": "NOT_FOUND"})
+            session.commit()
+            return json.dumps(result, default=str)
+
+    return mcp
