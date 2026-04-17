@@ -1,324 +1,217 @@
-# mtk — Mail Toolkit
+# mail-memex
 
-A toolkit for managing personal email archives with semantic search, relationship mapping, and privacy controls. Built atop `notmuch` with extensions for the longecho ecosystem.
+Personal email archive with SQLite+FTS5 full-text search and an MCP server for LLM access.
 
-## Status
+Part of the [`*-memex` ecosystem](../memex) of co-located personal archives: `llm-memex` (AI conversations), `bookmark-memex`, `photo-memex`, `book-memex`, `hugo-memex`, and `health-memex`.
 
-**Incubating.** Part of the [longecho](../longecho) personal archive ecosystem.
+## What It Does
 
-## The Problem
+- **Ingests** email from Gmail Takeout, mbox files, `.eml` files, or IMAP (Gmail OAuth2 or any IMAP server).
+- **Indexes** every message with SQLite FTS5 for ranked full-text search (Porter stemming, BM25 weighting).
+- **Rebuilds threads** from `In-Reply-To` / `References` headers.
+- **Exposes** the archive as an MCP server so LLMs can query it with SQL or Gmail-style operators.
+- **Exports** to JSON, mbox, markdown, a single-file HTML SPA (embedded SQLite via sql.js), or arkiv JSONL for cross-archive ingestion.
+- **Marginalia:** attach free-form notes to any email, thread, or marginalia itself, addressable by durable URIs that survive re-imports.
+- **Soft-deletes:** archived emails and threads stay queryable but are filtered from default results, so MCP trails and marginalia references don't break.
 
-Your email archive — decades of correspondence, relationships, decisions, life — is:
+mail-memex is **not an email client**. It does not send or reply to mail. It's a long-term archive and an LLM-queryable surface on top of your mail history.
 
-- Trapped in proprietary formats or cloud services
-- Searchable only by keywords, not meaning
-- Missing relationship context (who matters? how often?)
-- A privacy minefield if not handled carefully
-- Likely to disappear when services shut down
-
-Email is one of the most complete records of your relationships and correspondence. It deserves careful preservation.
-
-## The Vision
-
-mtk provides:
-
-1. **Import from anywhere** — Maildir, mbox, Gmail Takeout, IMAP exports
-2. **notmuch integration** — Leverage excellent existing indexing
-3. **Enhanced search** — Semantic search, relationship queries
-4. **Relationship mapping** — Who do you correspond with? How often? About what?
-5. **Privacy controls** — Filter, redact, selectively export
-6. **longecho export** — Unified archive format with appropriate privacy
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         IMPORT SOURCES                           │
-├─────────────────────────────────────────────────────────────────┤
-│  Maildir  │  mbox  │  Gmail Takeout  │  IMAP export  │  EML    │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     NOTMUCH (indexing core)                      │
-│                                                                  │
-│  • Fast full-text search                                        │
-│  • Tag-based organization                                       │
-│  • Thread reconstruction                                        │
-│  • Xapian backend                                               │
-│                                                                  │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     MTK (enhancement layer)                      │
-│                                                                  │
-│  • SQLite shadow database (our metadata)                        │
-│  • Embeddings for semantic search                               │
-│  • Relationship extraction and mapping                          │
-│  • Thread summarization                                         │
-│  • Privacy filtering and redaction                              │
-│                                                                  │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                          EXPORT                                  │
-├─────────────────────────────────────────────────────────────────┤
-│  Filtered archive  │  Relationship graph  │  longecho           │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-## Relation to longecho
-
-mtk is a **domain toolkit** in the longecho ecosystem:
-
-| Tool | Domain | What it captures |
-|------|--------|------------------|
-| ctk | Conversations | How you think, your voice |
-| btk | Bookmarks | What you find worth preserving |
-| ebk | Ebooks | Your intellectual foundations |
-| stk | Static sites | Your public voice |
-| ptk | Photos | Visual memories |
-| **mtk** | **Mail** | **Relationships, correspondence** |
-| longecho | Orchestration | Synthesis, durability, the ghost |
-
-mtk exports to the **unified artifact format** that longecho ingests.
-
-## Why Wrap notmuch?
-
-[notmuch](https://notmuchmail.org/) is an excellent mail indexer that aligns with our philosophy:
-
-- **Fast** — Xapian-based full-text search
-- **Tag-based** — Flexible organization
-- **Unix philosophy** — Does one thing well
-- **Maildir native** — Standard format
-- **Active development** — Well-maintained
-
-Rather than reinvent mail indexing, mtk wraps notmuch and adds:
-- Semantic search (embeddings)
-- Relationship mapping
-- Privacy controls
-- longecho integration
-
-## Design Philosophy
-
-- **notmuch-native** — Use notmuch for core indexing, don't replace it
-- **SQLite shadow** — Our metadata alongside notmuch's Xapian
-- **Privacy-first** — Explicit controls on what gets exported
-- **Relationship-aware** — Who matters, not just what was said
-- **Local-only** — No cloud, no sync, your mail stays yours
-
-## Planned Usage
+## Install
 
 ```bash
-# Initial setup (uses existing notmuch or creates new)
-mtk init ~/mail              # Point to Maildir
-mtk init --import-mbox ~/archive.mbox
-mtk init --import-gmail ~/takeout/mail
-
-# Sync with notmuch
-mtk sync                     # Pull notmuch tags and index
-
-# Search (enhanced)
-mtk search "project proposal"           # Full-text
-mtk search --semantic "discussions about moving" # Semantic
-mtk search --from "mom"                 # From specific person
-mtk search --thread thread:abc123       # Show thread
-
-# Relationships
-mtk people                   # List correspondents
-mtk people --top 20          # Most frequent
-mtk person "John Smith"      # Correspondence with person
-mtk graph                    # Relationship graph
-
-# Summarization
-mtk summarize thread:abc123  # Summarize a thread
-mtk summarize --from "boss"  # Summarize correspondence
-
-# Privacy
-mtk privacy show             # Show current privacy rules
-mtk privacy add-exclude "work@company.com"
-mtk privacy add-redact "secret-project"
-mtk privacy preview          # Preview what would be exported
-
-# Export
-mtk export archive ~/mail-archive       # Filtered archive
-mtk export graph ~/relationships.json   # Relationship graph
-mtk export longecho                      # Unified format
+pip install -e ".[mcp,imap,imap-oauth]"
 ```
+
+Optional extras: `mcp` (MCP server), `imap` (IMAP pull with keyring), `imap-oauth` (Gmail OAuth2).
+
+## Quick Start
+
+```bash
+# 1. Initialize
+mail-memex init
+
+# 2. Import from Gmail Takeout, mbox, or eml
+mail-memex import gmail ~/takeout/"All mail Including Spam and Trash.mbox"
+mail-memex import mbox archive.mbox
+mail-memex import eml ~/Mail/
+
+# 3. Search
+mail-memex search "project proposal"
+mail-memex search "from:alice after:2024-01-01 has:attachment"
+
+# 4. Start MCP server (LLM-facing)
+mail-memex mcp
+```
+
+## CLI Commands
+
+| Command | Purpose |
+|---------|---------|
+| `mail-memex init` | Create the database |
+| `mail-memex import {mbox,eml,gmail}` | Import from a source |
+| `mail-memex search QUERY` | Search (FTS5 ranked, with Gmail-style operators) |
+| `mail-memex tag {add,remove,list,batch}` | Manage tags |
+| `mail-memex rebuild {index,threads}` | Rebuild FTS index or threads |
+| `mail-memex export {json,mbox,markdown,html,arkiv}` | Export the archive |
+| `mail-memex imap {accounts,sync,folders,test}` | IMAP incremental sync |
+| `mail-memex mcp` | Start the stdio MCP server |
+
+All commands accept `--json` for machine-readable output.
+
+### Search Operators
+
+Gmail-style query language:
+
+```
+from:alice              # sender address contains "alice"
+to:bob@example.com      # any recipient field contains "bob@..."
+subject:proposal        # subject contains "proposal"
+after:2024-01-01        # date on or after
+before:2024-12-31       # date on or before
+tag:work                # has the tag "work"
+-tag:archive            # does NOT have the tag "archive"
+has:attachment          # has at least one attachment
+thread:<thread-id>      # in a specific thread
+```
+
+Free-text terms are matched against subject and body via FTS5.
+
+## MCP Server
+
+The MCP server is the primary interface for LLM access. Configure it in `~/.claude.json` (or any MCP client config):
+
+```json
+{
+  "mcpServers": {
+    "mail-memex": {
+      "type": "stdio",
+      "command": "/path/to/venv/bin/python",
+      "args": ["-m", "mail_memex.mcp"]
+    }
+  }
+}
+```
+
+### Exposed Tools
+
+**Contract tools** (shared across the `*-memex` ecosystem):
+
+| Tool | Purpose |
+|------|---------|
+| `get_schema` | Return DDL, column metadata, descriptions, and query tips |
+| `execute_sql(sql, readonly=true)` | Run SQL. DDL always blocked; writes blocked by default. |
+| `get_record(kind, record_id)` | Resolve a `mail-memex://` URI. `kind` is one of `email`, `thread`, `marginalia`. Returns soft-deleted records too, so trail steps don't break. |
+
+**Domain tools:**
+
+| Tool | Purpose |
+|------|---------|
+| `search_emails(query, limit)` | Gmail-style search, BM25 ranked |
+| `create_marginalia(target_uris, content, category?, color?, pinned?)` | Attach a note to one or more URIs |
+| `list_marginalia(target_uri?, include_archived?, limit?)` | List notes |
+| `get_marginalia(uuid)` | Fetch a note by UUID |
+| `update_marginalia(uuid, ...)` | Update fields |
+| `delete_marginalia(uuid, hard?)` | Soft delete by default; `hard=true` for permanent removal |
+| `restore_marginalia(uuid)` | Undo a soft delete |
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│     Sources: mbox, eml, Gmail Takeout, IMAP (incl. OAuth2)  │
+└────────────────────────────┬────────────────────────────────┘
+                             ▼
+              ┌──────────────────────────────┐
+              │   Importers (idempotent      │
+              │   dedup by Message-ID)       │
+              └──────────────┬───────────────┘
+                             ▼
+┌────────────────────────────────────────────────────────────┐
+│                     SQLite + FTS5                           │
+│                                                             │
+│  emails, threads, tags, attachments, imap_sync_state,       │
+│  marginalia, marginalia_targets, emails_fts (Porter+BM25)  │
+│                                                             │
+│  Soft delete via archived_at on emails, threads, marginalia│
+└──────┬────────────────────────────────────┬─────────────────┘
+       │                                    │
+       ▼                                    ▼
+┌──────────────────────┐         ┌─────────────────────────┐
+│  MCP Server          │         │   Exporters             │
+│  (FastMCP, stdio)    │         │                         │
+│                      │         │   JSON, mbox, markdown, │
+│  execute_sql         │         │   HTML SPA (sql.js),    │
+│  get_schema          │         │   arkiv JSONL+schema    │
+│  get_record          │         │                         │
+│  search_emails       │         │   Cross-archive URIs:   │
+│  marginalia CRUD     │         │   mail-memex://...      │
+└──────────────────────┘         └─────────────────────────┘
+```
+
+### URI Scheme
+
+Records are addressable by URI, making cross-archive references durable:
+
+```
+mail-memex://email/<message_id>
+mail-memex://thread/<thread_id>
+mail-memex://marginalia/<uuid>
+```
+
+A trail in `meta-memex` (or a note anywhere else) can reference these as plain strings. The archive resolves them via `get_record`.
+
+### Database ID Scheme
+
+- **`message_id`** (RFC 2822 Message-ID header) is the durable, external identifier used for deduplication and URIs. If a message arrives without one, mail-memex generates `generated-{sha256[:32]}@mail-memex.local` deterministically.
+- **`id`** (auto-increment integer) is the internal primary key used for FK relationships and FTS5 joins. Do not expose this outside the database.
+
+### FTS5 Details
+
+- Tokenizer: `porter unicode61` (English stemming + Unicode segmentation).
+- BM25 column weights: `subject=10.0, body_text=1.0, from_addr=5.0, from_name=5.0`.
+- Triggers keep `emails_fts` in sync with `emails` automatically on INSERT/UPDATE/DELETE.
+- Falls back to SQL `LIKE` matching if FTS5 is unavailable.
+
+### Thread Reconstruction
+
+Threads are rebuilt from `In-Reply-To` headers (only). The algorithm:
+
+1. Find emails with `thread_id IS NULL` that have `in_reply_to`.
+2. Look up the parent by `message_id`.
+3. If the parent has a thread, join it. Otherwise, create `thread-{parent.message_id}` and assign both.
+4. Loop until no new threads are created (handles deep chains).
+
+Runs automatically after every import, and can be re-run with `mail-memex rebuild threads`.
+
+## Paths
+
+- **Config:** `~/.config/mail-memex/config.yaml`
+- **Database:** `~/.local/share/mail-memex/mail-memex.db`
+- **Env var:** `MAIL_MEMEX_DATABASE_PATH` overrides the database path.
 
 ## Data Model
 
-SQLAlchemy ORM models stored in SQLite:
+Core tables (all carry `archived_at TIMESTAMP NULL` where applicable):
 
-```python
-class Email(Base):
-    message_id: str            # Message-ID (unique)
-    thread_id: str | None      # FK to Thread
-    from_addr: str
-    from_name: str | None
-    subject: str | None
-    date: datetime
-    in_reply_to: str | None
-    references: str | None     # Space-separated message IDs
-    body_text: str | None
-    body_html: str | None
-    body_preview: str | None
-    embedding: bytes | None    # For semantic search
-    summary: str | None        # AI-generated summary
-    export_allowed: bool       # Privacy control
-    # Relationships: thread, sender, attachments, tags
+- **emails**: headers (to/cc/bcc as comma-separated strings), body text/html, preview, thread_id, raw headers in `metadata_json` for custom field queries.
+- **threads**: thread_id, subject, first/last date, email count.
+- **tags**: name (unique), source (`mail-memex` or `imap`).
+- **attachments**: filename, content type, size. Content is not stored (retrieve from the source file).
+- **marginalia**: uuid, content, category, color, pinned. Free-form notes.
+- **marginalia_targets**: many-to-many join from marginalia to target URIs (strings, no FK).
+- **imap_sync_state**: per-account, per-folder UIDVALIDITY and last_uid for incremental sync.
+- **emails_fts**: FTS5 virtual table.
 
-class Person(Base):
-    name: str
-    primary_email: str | None
-    relationship_type: str | None  # "family", "friend", "colleague", etc.
-    email_count: int
-    first_contact: datetime | None
-    last_contact: datetime | None
-    # Relationships: email_addresses (PersonEmail), sent_emails
+## Design Principles
 
-class Thread(Base):
-    thread_id: str             # Unique thread identifier
-    subject: str | None
-    email_count: int
-    first_date: datetime | None
-    last_date: datetime | None
-    summary: str | None
-    # Relationships: emails
-```
+- **Contract compliance.** Satisfies the `*-memex` archive contract: SQLite+FTS5, MCP server with `execute_sql`/`get_schema`/`get_record`, arkiv export, soft delete, marginalia, durable URIs.
+- **Thin admin CLI.** Use the CLI for import, export, and housekeeping. Use the MCP server for interactive query. Marginalia is MCP-only.
+- **No embeddings here.** Archives stay narrow. The federation layer (`meta-memex`, soon to be renamed to `memex`) computes embeddings and maintains cross-archive trails.
+- **Re-importable.** Dedup by Message-ID, so running the same import twice is a no-op.
 
-Additional models: `Tag`, `Attachment`, `Annotation`, `Collection`, `PrivacyRule`, `TopicCluster`, `PersonEmail`, `CustomField`.
+## Status
 
-## Privacy Controls
-
-Email is sensitive. mtk provides explicit privacy controls:
-
-### Exclusion Rules
-```yaml
-# ~/.config/mtk/privacy.yaml
-exclude:
-  # Exclude by address
-  addresses:
-    - "*@work.com"
-    - "boss@company.com"
-
-  # Exclude by tag
-  tags:
-    - "work"
-    - "confidential"
-
-  # Exclude by content pattern
-  patterns:
-    - "CONFIDENTIAL"
-    - "attorney-client"
-```
-
-### Redaction Rules
-```yaml
-redact:
-  # Redact specific patterns in exported content
-  patterns:
-    - pattern: '\b\d{3}-\d{2}-\d{4}\b'  # SSN
-      replacement: "[REDACTED-SSN]"
-    - pattern: 'secret-project-\w+'
-      replacement: "[REDACTED-PROJECT]"
-```
-
-### Export Levels
-```bash
-mtk export --level personal   # Only personal (non-work)
-mtk export --level family     # Only family
-mtk export --level all        # Everything (careful!)
-```
-
-## Import Sources (Planned)
-
-| Source | Format | Priority |
-|--------|--------|----------|
-| Maildir | standard | HIGH |
-| mbox | standard | HIGH |
-| Gmail Takeout | MBOX in zip | HIGH |
-| EML files | individual emails | MEDIUM |
-| IMAP | direct download | MEDIUM |
-| Outlook PST | proprietary | LOW |
-
-## Integration with notmuch
-
-mtk does not replace notmuch — it enhances it:
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         YOUR MAIL                                │
-│                    (Maildir structure)                           │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-              ┌──────────────┴──────────────┐
-              ▼                              ▼
-┌─────────────────────────┐    ┌─────────────────────────┐
-│        NOTMUCH          │    │          MTK            │
-│                         │    │                         │
-│  • Xapian index         │◄───│  • Shadow SQLite        │
-│  • Full-text search     │    │  • Embeddings           │
-│  • Tags                 │    │  • Relationships        │
-│  • Threads              │    │  • Privacy rules        │
-│                         │    │  • Summaries            │
-└─────────────────────────┘    └─────────────────────────┘
-```
-
-## Technical Notes
-
-### notmuch Integration (Optional)
-
-notmuch is optional. mtk can import emails directly from Maildir, mbox, and EML files without notmuch. Install notmuch for bidirectional tag sync and notmuch-based import:
-
-```bash
-# Debian/Ubuntu
-sudo apt install notmuch
-
-# Arch
-sudo pacman -S notmuch
-
-# macOS
-brew install notmuch
-```
-
-### Shadow Database
-
-mtk maintains a SQLite database alongside notmuch's Xapian index:
-
-- Embeddings (notmuch doesn't have these)
-- Relationship data
-- Summaries
-- Privacy rules
-- Export metadata
-
-### Embedding Generation
-
-For semantic search, mtk generates embeddings for email content:
-
-```python
-# Using sentence-transformers
-from sentence_transformers import SentenceTransformer
-model = SentenceTransformer('all-MiniLM-L6-v2')
-embedding = model.encode(email.body_text)
-```
-
-## Development
-
-```bash
-cd ~/github/beta/mtk
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-```
-
-## Dependencies
-
-- **SQLAlchemy** — ORM and database layer (required)
-- **typer + rich** — CLI framework (required)
-- **notmuch + notmuch2** — Mail indexing integration (optional, `pip install mtk[notmuch]`)
-- **sentence-transformers** — Embeddings for semantic search (optional, `pip install mtk[semantic]`)
-- **ollama** — Local LLM for classification/summarization (optional)
+v0.6.0 (alpha). Active development. The archive shape is stable but the CLI surface may still evolve.
 
 ## License
 

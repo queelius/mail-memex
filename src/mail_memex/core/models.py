@@ -138,8 +138,8 @@ class Tag(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     source: Mapped[str] = mapped_column(
-        String(20), default="mtk"
-    )  # source of tag (e.g. "mtk", "imap")
+        String(20), default="mail-memex"
+    )  # source of tag (e.g. "mail-memex", "imap")
 
     # Relationships
     emails: Mapped[list[Email]] = relationship(secondary=email_tags, back_populates="tags")

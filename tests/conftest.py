@@ -56,8 +56,8 @@ def data_dir(tmp_dir: Path) -> Path:
 
 
 @pytest.fixture
-def isolated_mtk_config(config_dir: Path, data_dir: Path) -> Iterator[dict[str, Path]]:
-    """Redirect MtkConfig default_config_dir and default_data_dir into tmp_dir.
+def isolated_mail_memex_config(config_dir: Path, data_dir: Path) -> Iterator[dict[str, Path]]:
+    """Redirect MailMemexConfig default_config_dir and default_data_dir into tmp_dir.
 
     Use for CLI tests that would otherwise mutate ~/.config/mail-memex/config.yaml
     (e.g., any test that invokes `mail-memex init` — init calls config.save() which
@@ -65,11 +65,11 @@ def isolated_mtk_config(config_dir: Path, data_dir: Path) -> Iterator[dict[str, 
 
     Yields a dict with 'config_dir' and 'data_dir' paths for assertions.
     """
-    from mail_memex.core.config import MtkConfig
+    from mail_memex.core.config import MailMemexConfig
 
     with (
-        patch.object(MtkConfig, "default_config_dir", classmethod(lambda cls: config_dir)),
-        patch.object(MtkConfig, "default_data_dir", classmethod(lambda cls: data_dir)),
+        patch.object(MailMemexConfig, "default_config_dir", classmethod(lambda cls: config_dir)),
+        patch.object(MailMemexConfig, "default_data_dir", classmethod(lambda cls: data_dir)),
     ):
         yield {"config_dir": config_dir, "data_dir": data_dir}
 
@@ -386,10 +386,10 @@ def populated_db(db: Database) -> Database:
 
         # Create tags
         tags = [
-            Tag(name="important", source="mtk"),
-            Tag(name="work", source="mtk"),
-            Tag(name="personal", source="mtk"),
-            Tag(name="urgent", source="mtk"),
+            Tag(name="important", source="mail-memex"),
+            Tag(name="work", source="mail-memex"),
+            Tag(name="personal", source="mail-memex"),
+            Tag(name="urgent", source="mail-memex"),
         ]
         session.add_all(tags)
         session.flush()
@@ -427,8 +427,8 @@ def populated_db(db: Database) -> Database:
 
 @pytest.fixture
 def mock_config(tmp_dir: Path):
-    """Mock MtkConfig to use temporary directories."""
-    with patch("mail_memex.core.config.MtkConfig") as mock_config_cls:
+    """Mock MailMemexConfig to use temporary directories."""
+    with patch("mail_memex.core.config.MailMemexConfig") as mock_config_cls:
         config = MagicMock()
         config.default_config_dir.return_value = tmp_dir / ".config" / "mail-memex"
         config.default_data_dir.return_value = tmp_dir / ".local" / "share" / "mail-memex"

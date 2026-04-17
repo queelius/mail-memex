@@ -12,7 +12,7 @@ from mail_memex.imap.account import ImapAccountConfig
 
 
 @dataclass
-class MtkConfig:
+class MailMemexConfig:
     """mail-memex configuration."""
 
     # Paths
@@ -32,7 +32,7 @@ class MtkConfig:
         return Path.home() / ".local" / "share" / "mail-memex"
 
     @classmethod
-    def load(cls, config_path: Path | None = None) -> MtkConfig:
+    def load(cls, config_path: Path | None = None) -> MailMemexConfig:
         """Load configuration from file.
 
         Args:
@@ -53,7 +53,7 @@ class MtkConfig:
         return cls.from_dict(data)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> MtkConfig:
+    def from_dict(cls, data: dict[str, Any]) -> MailMemexConfig:
         """Create config from dictionary."""
         config = cls()
 

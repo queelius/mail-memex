@@ -43,7 +43,7 @@ ruff format src/mail_memex tests
 ### Core Layer (`src/mail_memex/core/`)
 - `models.py` - SQLAlchemy ORM models: Email, Thread, Tag, Attachment, ImapSyncState, Marginalia, MarginaliaTarget
 - `database.py` - Database session management. SQLite with WAL mode and foreign keys enabled.
-- `config.py` - MtkConfig for YAML-based configuration with IMAP account support
+- `config.py` - MailMemexConfig for YAML-based configuration with IMAP account support
 - `marginalia.py` - Marginalia CRUD operations (create, list, get, update, soft-delete, restore, purge)
 
 ### Importers (`src/mail_memex/importers/`)
@@ -153,7 +153,7 @@ Tests use pytest with fixtures defined in `tests/conftest.py`:
 - `populated_db` - Database with sample data (5 emails, 2 threads, 4 tags)
 - `sample_mbox`, `sample_eml_dir` - File system fixtures for import testing
 - `email_factory` - Factory fixture for creating test email records with defaults
-- `isolated_mtk_config` - Redirects MtkConfig default dirs to a tmp directory. Use for CLI tests that invoke `mail-memex init` or any command that would write to `~/.config/mail-memex/`.
+- `isolated_mail_memex_config` - Redirects MailMemexConfig default dirs to a tmp directory. Use for CLI tests that invoke `mail-memex init` or any command that would write to `~/.config/mail-memex/`.
 
 ## Optional Dependencies
 

@@ -11,7 +11,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from mail_memex.core.config import MtkConfig
+from mail_memex.core.config import MailMemexConfig
 from mail_memex.imap.account import ImapAccountConfig
 
 imap_app = typer.Typer(help="IMAP email sync")
@@ -20,7 +20,7 @@ console = Console()
 
 def _get_account(name: str) -> ImapAccountConfig:
     """Get an IMAP account by name from config."""
-    config = MtkConfig.load()
+    config = MailMemexConfig.load()
     account = config.imap_accounts.get(name)
     if not account:
         console.print(f"[red]Account not found: {name}[/red]")
@@ -54,7 +54,7 @@ def imap_add(
     json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
     """Add an IMAP account."""
-    config = MtkConfig.load()
+    config = MailMemexConfig.load()
 
     folder_list = [f.strip() for f in (folders or "INBOX").split(",")]
 
@@ -117,7 +117,7 @@ def imap_remove(
     json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
     """Remove an IMAP account."""
-    config = MtkConfig.load()
+    config = MailMemexConfig.load()
 
     if name not in config.imap_accounts:
         if json:
@@ -149,7 +149,7 @@ def imap_accounts(
     json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
     """List configured IMAP accounts."""
-    config = MtkConfig.load()
+    config = MailMemexConfig.load()
 
     if json:
         data = [

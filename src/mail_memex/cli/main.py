@@ -17,7 +17,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from mail_memex import __version__
-from mail_memex.core.config import MtkConfig
+from mail_memex.core.config import MailMemexConfig
 from mail_memex.core.database import Database
 
 app = typer.Typer(
@@ -30,7 +30,7 @@ console = Console()
 
 def get_db() -> Database:
     """Get the database, loading config as needed."""
-    config = MtkConfig.load()
+    config = MailMemexConfig.load()
     if not config.db_path:
         config.db_path = config.default_data_dir() / "mail-memex.db"
     return Database(config.db_path)
@@ -60,7 +60,7 @@ def _ensure_tag(session, tag_name: str):
 
     tag = session.execute(select(Tag).where(Tag.name == tag_name)).scalar()
     if not tag:
-        tag = Tag(name=tag_name, source="mtk")
+        tag = Tag(name=tag_name, source="mail-memex")
         session.add(tag)
         session.flush()
     return tag
@@ -85,7 +85,7 @@ def init(
     force: bool = typer.Option(False, "--force", "-f", help="Reinitialize if already exists"),
 ) -> None:
     """Initialize mail-memex database."""
-    config = MtkConfig.load()
+    config = MailMemexConfig.load()
     config.ensure_dirs()
 
     if db_path:

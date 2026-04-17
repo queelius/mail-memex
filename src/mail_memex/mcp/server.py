@@ -14,7 +14,7 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-from mail_memex.core.config import MtkConfig
+from mail_memex.core.config import MailMemexConfig
 from mail_memex.core.database import Database
 
 # ---------------------------------------------------------------------------
@@ -271,11 +271,11 @@ def _get_db_path() -> Path:
     if env_path:
         return Path(env_path)
 
-    config = MtkConfig.load()
+    config = MailMemexConfig.load()
     if config.db_path:
         return config.db_path
 
-    return MtkConfig.default_data_dir() / "mail-memex.db"
+    return MailMemexConfig.default_data_dir() / "mail-memex.db"
 
 
 def create_server() -> FastMCP:

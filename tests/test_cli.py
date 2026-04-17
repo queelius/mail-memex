@@ -42,7 +42,7 @@ class TestInitCommand:
         assert result.exit_code == 0
         assert "init" in result.output.lower()
 
-    def test_init_creates_fresh_db(self, tmp_path, isolated_mtk_config) -> None:
+    def test_init_creates_fresh_db(self, tmp_path, isolated_mail_memex_config) -> None:
         """init should create a new database file at the given path."""
         db_path = tmp_path / "new.db"
         assert not db_path.exists()
@@ -52,7 +52,7 @@ class TestInitCommand:
         assert result.exit_code == 0
         assert db_path.exists()
 
-    def test_init_refuses_when_db_exists(self, tmp_path, isolated_mtk_config) -> None:
+    def test_init_refuses_when_db_exists(self, tmp_path, isolated_mail_memex_config) -> None:
         """init without --force should refuse to overwrite existing DB."""
         db_path = tmp_path / "existing.db"
         # Create the DB first
@@ -65,7 +65,7 @@ class TestInitCommand:
         assert result.exit_code != 0
         assert "already exists" in result.output.lower()
 
-    def test_init_force_drops_existing_data(self, tmp_path, isolated_mtk_config) -> None:
+    def test_init_force_drops_existing_data(self, tmp_path, isolated_mail_memex_config) -> None:
         """init --force must actually reinitialize: existing data is dropped."""
         import sqlite3
 
@@ -109,7 +109,7 @@ class TestImportMetadata:
     """Tests that import populates the metadata_json column from raw_headers."""
 
     def test_mbox_import_preserves_gmail_labels(
-        self, tmp_path, isolated_mtk_config, sample_gmail_mbox
+        self, tmp_path, isolated_mail_memex_config, sample_gmail_mbox
     ) -> None:
         """Gmail mbox import should preserve X-Gmail-Labels in metadata_json."""
         import json as json_lib
@@ -119,14 +119,14 @@ class TestImportMetadata:
         runner.invoke(app, ["init", "--db", str(db_path)])
 
         # Point the CLI at this test DB via a patched config loader
-        from mail_memex.core.config import MtkConfig
+        from mail_memex.core.config import MailMemexConfig
 
         def _load_with_db(*args, **kwargs):
-            cfg = MtkConfig()
+            cfg = MailMemexConfig()
             cfg.db_path = db_path
             return cfg
 
-        with patch.object(MtkConfig, "load", _load_with_db):
+        with patch.object(MailMemexConfig, "load", _load_with_db):
             result = runner.invoke(app, ["import", "mbox", str(sample_gmail_mbox), "--json"])
 
         assert result.exit_code == 0, f"import failed: {result.output}"
@@ -294,7 +294,7 @@ class TestTagCommand:
                 email = Email(
                     message_id="test@example.com", from_addr="a@b.com", date=datetime(2024, 1, 15)
                 )
-                tag = Tag(name="work", source="mtk")
+                tag = Tag(name="work", source="mail-memex")
                 session.add(email)
                 session.add(tag)
                 session.flush()
@@ -336,7 +336,7 @@ class TestTagCommand:
                 email = Email(
                     message_id="test@example.com", from_addr="a@b.com", date=datetime(2024, 1, 15)
                 )
-                tag = Tag(name="work", source="mtk")
+                tag = Tag(name="work", source="mail-memex")
                 session.add(email)
                 session.add(tag)
                 session.flush()

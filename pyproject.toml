@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mail-memex"
-version = "0.5.0"
+version = "0.6.0"
 description = "Mail Memex - Personal email archive with full-text search and SQL/MCP access"
 readme = "README.md"
 license = "MIT"
