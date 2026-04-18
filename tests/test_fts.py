@@ -225,6 +225,106 @@ class TestFts5TriggerSync:
             ).scalar()
             assert count == 0
 
+    def test_update_trigger_is_column_scoped(self, fts_db: Database) -> None:
+        """Regression: the UPDATE trigger must list only the four indexed
+        columns (subject, body_text, from_addr, from_name). Without the
+        scope, archived_at and imap_uid updates would needlessly rebuild
+        the FTS entry for every row touched."""
+        with fts_db.session() as session:
+            ddl = session.execute(
+                text(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type='trigger' AND name='emails_fts_update'"
+                )
+            ).scalar()
+        assert ddl is not None, "emails_fts_update trigger is missing"
+        upper = ddl.upper()
+        assert "UPDATE OF" in upper, (
+            f"Trigger is not column-scoped (would fire on every column):\n{ddl}"
+        )
+        for col in ("subject", "body_text", "from_addr", "from_name"):
+            assert col in ddl, f"Scoped trigger is missing column {col!r}:\n{ddl}"
+
+    def test_archived_at_update_does_not_fire_fts_trigger(self, fts_db: Database) -> None:
+        """Setting archived_at is a soft-delete marker, not a content change.
+        The scoped UPDATE trigger must not re-insert the FTS entry — the
+        rowid inside emails_fts stays stable across archived_at changes."""
+        with fts_db.session() as session:
+            email = Email(
+                message_id="scope1@example.com",
+                from_addr="test@example.com",
+                subject="Scoped trigger subject",
+                body_text="body",
+                date=datetime(2024, 1, 15),
+            )
+            session.add(email)
+            session.commit()
+
+            rowid_before = session.execute(
+                text("SELECT rowid FROM emails_fts WHERE email_id = :eid"),
+                {"eid": email.id},
+            ).scalar()
+
+            # Insert a second email to bump the FTS rowid counter.
+            # If the old trigger fires on archived_at, the re-inserted FTS
+            # row for email #1 would get a rowid > rowid_of(email #2).
+            other = Email(
+                message_id="scope-other@example.com",
+                from_addr="x@example.com",
+                subject="other",
+                body_text="other",
+                date=datetime(2024, 1, 15),
+            )
+            session.add(other)
+            session.commit()
+
+            email.archived_at = datetime(2024, 2, 1)
+            session.commit()
+
+            rowid_after = session.execute(
+                text("SELECT rowid FROM emails_fts WHERE email_id = :eid"),
+                {"eid": email.id},
+            ).scalar()
+            assert rowid_after == rowid_before, (
+                "archived_at update caused FTS re-insert (trigger not column-scoped)"
+            )
+
+    def test_setup_migrates_old_unscoped_trigger(self, fts_db: Database) -> None:
+        """Databases that already have the old (unscoped) UPDATE trigger must
+        have it replaced by the new (column-scoped) version when setup_fts5
+        runs again. This is the migration path for existing installs."""
+        from mail_memex.search.fts import setup_fts5
+
+        # Simulate an existing DB with the old, unscoped trigger.
+        with fts_db.session() as session:
+            session.execute(text("DROP TRIGGER emails_fts_update"))
+            session.execute(
+                text(
+                    "CREATE TRIGGER emails_fts_update AFTER UPDATE ON emails "
+                    "BEGIN "
+                    "DELETE FROM emails_fts WHERE email_id = OLD.id; "
+                    "INSERT INTO emails_fts(email_id, subject, body_text, from_addr, from_name) "
+                    "VALUES (NEW.id, COALESCE(NEW.subject, ''), COALESCE(NEW.body_text, ''), "
+                    "COALESCE(NEW.from_addr, ''), COALESCE(NEW.from_name, '')); "
+                    "END"
+                )
+            )
+            session.commit()
+
+        # Re-run setup — this should drop the old trigger and install the scoped one.
+        assert setup_fts5(fts_db.engine) is True
+
+        with fts_db.session() as session:
+            ddl = session.execute(
+                text(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type='trigger' AND name='emails_fts_update'"
+                )
+            ).scalar()
+        assert "UPDATE OF" in (ddl or "").upper(), (
+            f"Old unscoped trigger was not replaced:\n{ddl}"
+        )
+
 
 # =============================================================================
 # Query preparation tests

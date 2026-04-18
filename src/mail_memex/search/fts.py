@@ -51,9 +51,13 @@ BEGIN
 END
 """
 
+# Scoped to the four indexed columns: updating archived_at, imap_uid,
+# thread_id, etc. must NOT rebuild the FTS entry. Column scope is matched
+# by name, so this also protects against future column additions that are
+# not part of the search surface.
 _CREATE_TRIGGER_UPDATE = f"""
 CREATE TRIGGER IF NOT EXISTS emails_fts_update
-AFTER UPDATE ON emails
+AFTER UPDATE OF subject, body_text, from_addr, from_name ON emails
 BEGIN
     DELETE FROM emails_fts WHERE email_id = OLD.id;
     {_FTS_INSERT_NEW};
@@ -100,7 +104,13 @@ def setup_fts5(engine: Engine) -> bool:
         # Create FTS table
         conn.execute(text(_CREATE_FTS_TABLE))
 
-        # Create triggers
+        # Drop the UPDATE trigger before (re)creating: older schemas had an
+        # unscoped AFTER UPDATE trigger that rebuilt FTS on every column
+        # change. IF NOT EXISTS would preserve that old definition, so we
+        # explicitly drop-and-recreate to apply the column scope on existing
+        # databases. INSERT/DELETE triggers are unchanged and stay idempotent.
+        conn.execute(text("DROP TRIGGER IF EXISTS emails_fts_update"))
+
         conn.execute(text(_CREATE_TRIGGER_INSERT))
         conn.execute(text(_CREATE_TRIGGER_UPDATE))
         conn.execute(text(_CREATE_TRIGGER_DELETE))
