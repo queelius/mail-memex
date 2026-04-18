@@ -66,6 +66,32 @@ def _ensure_tag(session, tag_name: str):
     return tag
 
 
+def _require_email_or_exit(session, message_id: str, json: bool):
+    """Resolve an email or print a not-found message and exit 1."""
+    email = _resolve_email(session, message_id)
+    if email:
+        return email
+    if json:
+        print(json_lib.dumps({"error": f"Email not found: {message_id}"}, indent=2))
+    else:
+        console.print(f"[red]Email not found: {message_id}[/red]")
+    raise typer.Exit(1)
+
+
+def _print_current_tags(email, json: bool) -> None:
+    """Print the email's current tags in JSON or Rich console format."""
+    current_tags = [t.name for t in email.tags]
+    if json:
+        print(
+            json_lib.dumps(
+                {"message_id": email.message_id, "tags": current_tags},
+                indent=2,
+            )
+        )
+    else:
+        console.print(f"Current tags: {', '.join(current_tags) or '(none)'}")
+
+
 @app.callback()
 def main(
     version: bool = typer.Option(False, "--version", "-V", help="Show version and exit"),
@@ -469,14 +495,7 @@ def tag_add(
     """Add tags to an email."""
     db = get_db()
     with db.session() as session:
-        email = _resolve_email(session, message_id)
-
-        if not email:
-            if json:
-                print(json_lib.dumps({"error": f"Email not found: {message_id}"}, indent=2))
-            else:
-                console.print(f"[red]Email not found: {message_id}[/red]")
-            raise typer.Exit(1)
+        email = _require_email_or_exit(session, message_id, json)
 
         for tag_name in tags:
             tag = _ensure_tag(session, tag_name)
@@ -486,20 +505,7 @@ def tag_add(
             console.print(f"[green]Added tags: {', '.join(tags)}[/green]")
 
         session.commit()
-
-        current_tags = [t.name for t in email.tags]
-        if json:
-            print(
-                json_lib.dumps(
-                    {
-                        "message_id": email.message_id,
-                        "tags": current_tags,
-                    },
-                    indent=2,
-                )
-            )
-        else:
-            console.print(f"Current tags: {', '.join(current_tags) or '(none)'}")
+        _print_current_tags(email, json)
 
 
 @tag_app.command("remove")
@@ -515,14 +521,7 @@ def tag_remove(
 
     db = get_db()
     with db.session() as session:
-        email = _resolve_email(session, message_id)
-
-        if not email:
-            if json:
-                print(json_lib.dumps({"error": f"Email not found: {message_id}"}, indent=2))
-            else:
-                console.print(f"[red]Email not found: {message_id}[/red]")
-            raise typer.Exit(1)
+        email = _require_email_or_exit(session, message_id, json)
 
         for tag_name in tags:
             existing_tag = session.execute(select(Tag).where(Tag.name == tag_name)).scalar()
@@ -532,20 +531,7 @@ def tag_remove(
             console.print(f"[yellow]Removed tags: {', '.join(tags)}[/yellow]")
 
         session.commit()
-
-        current_tags = [t.name for t in email.tags]
-        if json:
-            print(
-                json_lib.dumps(
-                    {
-                        "message_id": email.message_id,
-                        "tags": current_tags,
-                    },
-                    indent=2,
-                )
-            )
-        else:
-            console.print(f"Current tags: {', '.join(current_tags) or '(none)'}")
+        _print_current_tags(email, json)
 
 
 @tag_app.command("list")
@@ -686,15 +672,7 @@ app.add_typer(export_app, name="export")
 
 
 def _prepare_export(session, query: str | None) -> list:
-    """Shared setup for export commands: fetch emails.
-
-    Args:
-        session: SQLAlchemy session.
-        query: Optional search query to filter emails.
-
-    Returns:
-        List of Email objects.
-    """
+    """Fetch emails for export, optionally filtered by a search query."""
     from sqlalchemy import select
 
     from mail_memex.core.models import Email
@@ -702,10 +680,17 @@ def _prepare_export(session, query: str | None) -> list:
 
     if query:
         engine = SearchEngine(session)
-        results = engine.search(query, limit=100000)
-        return [r.email for r in results]
+        return [r.email for r in engine.search(query, limit=100000)]
 
     return list(session.execute(select(Email)).scalars())
+
+
+def _run_export(exporter_factory, query: str | None):
+    """Open a session, fetch emails, run the exporter, return the result."""
+    db = get_db()
+    with db.session() as session:
+        emails = _prepare_export(session, query)
+        return exporter_factory().export(emails)
 
 
 @export_app.command("json")
@@ -718,11 +703,7 @@ def export_json(
     """Export emails to JSON format."""
     from mail_memex.export import JsonExporter
 
-    db = get_db()
-    with db.session() as session:
-        emails = _prepare_export(session, query)
-        exporter = JsonExporter(output, pretty=pretty)
-        result = exporter.export(emails)
+    result = _run_export(lambda: JsonExporter(output, pretty=pretty), query)
 
     if json_output:
         print(json_lib.dumps(result.to_dict(), indent=2))
@@ -739,11 +720,7 @@ def export_mbox(
     """Export emails to mbox format."""
     from mail_memex.export import MboxExporter
 
-    db = get_db()
-    with db.session() as session:
-        emails = _prepare_export(session, query)
-        exporter = MboxExporter(output)
-        result = exporter.export(emails)
+    result = _run_export(lambda: MboxExporter(output), query)
 
     if json:
         print(json_lib.dumps(result.to_dict(), indent=2))
@@ -761,11 +738,7 @@ def export_markdown(
     """Export emails to Markdown files."""
     from mail_memex.export import MarkdownExporter
 
-    db = get_db()
-    with db.session() as session:
-        emails = _prepare_export(session, query)
-        exporter = MarkdownExporter(output, group_by_thread=threads)
-        result = exporter.export(emails)
+    result = _run_export(lambda: MarkdownExporter(output, group_by_thread=threads), query)
 
     if json:
         print(json_lib.dumps(result.to_dict(), indent=2))
@@ -782,11 +755,7 @@ def export_html(
     """Export email archive as a self-contained HTML application."""
     from mail_memex.export.html_export import HtmlExporter
 
-    db = get_db()
-    with db.session() as session:
-        emails = _prepare_export(session, query)
-        exporter = HtmlExporter(output)
-        result = exporter.export(emails)
+    result = _run_export(lambda: HtmlExporter(output), query)
 
     if json_output:
         print(json_lib.dumps(result.to_dict(), indent=2))
@@ -805,11 +774,7 @@ def export_arkiv(
     """Export emails to arkiv JSONL format."""
     from mail_memex.export.arkiv_export import ArkivExporter
 
-    db = get_db()
-    with db.session() as session:
-        emails = _prepare_export(session, query)
-        exporter = ArkivExporter(output, include_body=include_body)
-        result = exporter.export(emails)
+    result = _run_export(lambda: ArkivExporter(output, include_body=include_body), query)
 
     if json_output:
         print(json_lib.dumps(result.to_dict(), indent=2))

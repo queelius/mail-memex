@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 from mail_memex.importers.base import BaseImporter
 from mail_memex.importers.parser import EmailParser, ParsedEmail
@@ -42,25 +43,21 @@ class EmlImporter(BaseImporter):
     def format_name(self) -> str:
         return "EML"
 
-    def discover(self) -> Iterator[Path]:
-        """Discover all EML files.
-
-        Yields:
-            Paths to EML files.
-        """
-        if self.source_path.is_file():
-            if self._is_eml_file(self.source_path):
-                yield self.source_path
-        else:
-            # Directory - find all EML files
-            pattern = "**/*" if self.recursive else "*"
-            for path in self.source_path.glob(pattern):
-                if path.is_file() and self._is_eml_file(path):
-                    yield path
-
     def _is_eml_file(self, path: Path) -> bool:
         """Check if a file is an EML file by extension."""
         return path.suffix.lower() in self.extensions
+
+    def discover(self) -> Iterator[Path]:
+        """Discover all EML files."""
+        if self.source_path.is_file():
+            if self._is_eml_file(self.source_path):
+                yield self.source_path
+            return
+
+        pattern = "**/*" if self.recursive else "*"
+        for path in self.source_path.glob(pattern):
+            if path.is_file() and self._is_eml_file(path):
+                yield path
 
     def parse(self, path: Path) -> ParsedEmail:
         """Parse a single EML file."""
@@ -120,6 +117,21 @@ class GmailTakeoutImporter(BaseImporter):
             finally:
                 mbox.close()
 
+    def _parse_gmail_message(
+        self, msg: Any, mbox_path: Path, index: int, folder: str | None = None
+    ) -> ParsedEmail:
+        """Parse a single Takeout message and decorate it with Gmail headers."""
+        parsed = self.parser.parse_bytes(bytes(msg))
+        parsed.file_path = mbox_path
+        parsed.raw_headers["X-Mbox-Index"] = str(index)
+        if folder is not None:
+            parsed.raw_headers["X-Gmail-Folder"] = folder
+        for header in ("X-Gmail-Labels", "X-Gmail-Thread-Id"):
+            value = msg.get(header)
+            if value:
+                parsed.raw_headers[header] = value
+        return parsed
+
     def parse(self, path: Path) -> ParsedEmail:
         """Parse a message from a Takeout mbox."""
         import mailbox
@@ -136,18 +148,7 @@ class GmailTakeoutImporter(BaseImporter):
             msg = mbox[index]  # type: ignore[index]
             if msg is None:
                 raise ValueError(f"Message {index} not found")
-
-            parsed = self.parser.parse_bytes(bytes(msg))
-            parsed.file_path = Path(file_path)
-            parsed.raw_headers["X-Mbox-Index"] = str(index)
-
-            # Extract Gmail-specific headers
-            for header in ["X-Gmail-Labels", "X-Gmail-Thread-Id"]:
-                value = msg.get(header)
-                if value:
-                    parsed.raw_headers[header] = value
-
-            return parsed
+            return self._parse_gmail_message(msg, Path(file_path), index)
         finally:
             mbox.close()
 
@@ -163,17 +164,7 @@ class GmailTakeoutImporter(BaseImporter):
             try:
                 for i, msg in enumerate(mbox):
                     try:
-                        parsed = self.parser.parse_bytes(bytes(msg))
-                        parsed.file_path = mbox_path
-                        parsed.raw_headers["X-Mbox-Index"] = str(i)
-                        parsed.raw_headers["X-Gmail-Folder"] = label
-
-                        for header in ["X-Gmail-Labels", "X-Gmail-Thread-Id"]:
-                            value = msg.get(header)
-                            if value:
-                                parsed.raw_headers[header] = value
-
-                        yield parsed, None
+                        yield self._parse_gmail_message(msg, mbox_path, i, label), None
                     except Exception as e:
                         yield None, f"{mbox_path}#{i}: {e}"
             finally:

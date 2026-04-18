@@ -19,6 +19,18 @@ if TYPE_CHECKING:
 # BM25 column weights: subject=10, body=1, from_addr=5, from_name=5
 _BM25_WEIGHTS = "10.0, 1.0, 5.0, 5.0"
 
+# Shared INSERT expression used by triggers and the one-shot backfill.
+_FTS_INSERT_NEW = (
+    "INSERT INTO emails_fts(email_id, subject, body_text, from_addr, from_name) "
+    "VALUES (NEW.id, COALESCE(NEW.subject, ''), COALESCE(NEW.body_text, ''), "
+    "COALESCE(NEW.from_addr, ''), COALESCE(NEW.from_name, ''))"
+)
+_FTS_BACKFILL_SELECT = (
+    "INSERT INTO emails_fts(email_id, subject, body_text, from_addr, from_name) "
+    "SELECT id, COALESCE(subject, ''), COALESCE(body_text, ''), "
+    "COALESCE(from_addr, ''), COALESCE(from_name, '') FROM emails"
+)
+
 # FTS5 table and trigger DDL
 _CREATE_FTS_TABLE = """
 CREATE VIRTUAL TABLE IF NOT EXISTS emails_fts USING fts5(
@@ -31,24 +43,20 @@ CREATE VIRTUAL TABLE IF NOT EXISTS emails_fts USING fts5(
 )
 """
 
-_CREATE_TRIGGER_INSERT = """
+_CREATE_TRIGGER_INSERT = f"""
 CREATE TRIGGER IF NOT EXISTS emails_fts_insert
 AFTER INSERT ON emails
 BEGIN
-    INSERT INTO emails_fts(email_id, subject, body_text, from_addr, from_name)
-    VALUES (NEW.id, COALESCE(NEW.subject, ''), COALESCE(NEW.body_text, ''),
-            COALESCE(NEW.from_addr, ''), COALESCE(NEW.from_name, ''));
+    {_FTS_INSERT_NEW};
 END
 """
 
-_CREATE_TRIGGER_UPDATE = """
+_CREATE_TRIGGER_UPDATE = f"""
 CREATE TRIGGER IF NOT EXISTS emails_fts_update
 AFTER UPDATE ON emails
 BEGIN
     DELETE FROM emails_fts WHERE email_id = OLD.id;
-    INSERT INTO emails_fts(email_id, subject, body_text, from_addr, from_name)
-    VALUES (NEW.id, COALESCE(NEW.subject, ''), COALESCE(NEW.body_text, ''),
-            COALESCE(NEW.from_addr, ''), COALESCE(NEW.from_name, ''));
+    {_FTS_INSERT_NEW};
 END
 """
 
@@ -102,13 +110,7 @@ def setup_fts5(engine: Engine) -> bool:
         email_count = conn.execute(text("SELECT COUNT(*) FROM emails")).scalar()
 
         if fts_count == 0 and email_count is not None and email_count > 0:
-            conn.execute(
-                text(
-                    "INSERT INTO emails_fts(email_id, subject, body_text, from_addr, from_name) "
-                    "SELECT id, COALESCE(subject, ''), COALESCE(body_text, ''), "
-                    "COALESCE(from_addr, ''), COALESCE(from_name, '') FROM emails"
-                )
-            )
+            conn.execute(text(_FTS_BACKFILL_SELECT))
 
         conn.commit()
 
@@ -270,13 +272,7 @@ def rebuild_fts_index(engine: Engine) -> int:
             return rebuild_fts_index(engine)
 
         # Re-populate from emails table
-        conn.execute(
-            text(
-                "INSERT INTO emails_fts(email_id, subject, body_text, from_addr, from_name) "
-                "SELECT id, COALESCE(subject, ''), COALESCE(body_text, ''), "
-                "COALESCE(from_addr, ''), COALESCE(from_name, '') FROM emails"
-            )
-        )
+        conn.execute(text(_FTS_BACKFILL_SELECT))
 
         count = conn.execute(text("SELECT COUNT(*) FROM emails_fts")).scalar() or 0
         conn.commit()

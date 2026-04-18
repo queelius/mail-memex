@@ -57,40 +57,28 @@ class MboxExporter(Exporter):
         """Create EmailMessage from email data."""
         msg = EmailMessage()
 
-        # Headers
         msg["Message-ID"] = f"<{email_data.get('message_id', '')}>"
         msg["Subject"] = email_data.get("subject", "")
 
-        # Format From header
         from_name = email_data.get("from_name", "")
         from_addr = email_data.get("from_addr", "")
-        if from_name:
-            msg["From"] = email.utils.formataddr((from_name, from_addr))
-        else:
-            msg["From"] = from_addr
+        msg["From"] = email.utils.formataddr((from_name, from_addr)) if from_name else from_addr
 
-        # Recipient headers
-        if email_data.get("to_addrs"):
-            msg["To"] = email_data["to_addrs"]
-        if email_data.get("cc_addrs"):
-            msg["Cc"] = email_data["cc_addrs"]
-        if email_data.get("bcc_addrs"):
-            msg["Bcc"] = email_data["bcc_addrs"]
+        for header, key in (("To", "to_addrs"), ("Cc", "cc_addrs"), ("Bcc", "bcc_addrs")):
+            if email_data.get(key):
+                msg[header] = email_data[key]
 
-        # Date
         date = email_data.get("date")
         if isinstance(date, datetime):
             msg["Date"] = email.utils.format_datetime(date)
         elif isinstance(date, str):
             msg["Date"] = date
 
-        # References
         if email_data.get("in_reply_to"):
             msg["In-Reply-To"] = email_data["in_reply_to"]
         if email_data.get("references"):
             msg["References"] = email_data["references"]
 
-        # Custom mail-memex headers
         tags = email_data.get("tags", [])
         if tags:
             msg["X-Mail-Memex-Tags"] = ", ".join(tags)
@@ -99,12 +87,10 @@ class MboxExporter(Exporter):
         if thread_id:
             msg["X-Mail-Memex-Thread-ID"] = thread_id
 
-        # Body
         body_text = email_data.get("body_text", "")
         body_html = email_data.get("body_html", "")
 
         if body_html and body_text:
-            # Multipart message
             msg.make_mixed()
             msg.add_alternative(body_text, subtype="plain")
             msg.add_alternative(body_html, subtype="html")

@@ -156,75 +156,51 @@ class PullSync:
         result: PullResult,
     ) -> None:
         """Process a single fetched IMAP message."""
-        # Parse headers
         header_bytes = data.get(b"BODY[HEADER]", b"")
-        text_bytes = data.get(b"BODY[TEXT]", b"")
-
-        if isinstance(header_bytes, bytes):
-            header_text = header_bytes.decode("utf-8", errors="replace")
-        else:
-            header_text = str(header_bytes)
-
+        header_text = (
+            header_bytes.decode("utf-8", errors="replace")
+            if isinstance(header_bytes, bytes)
+            else str(header_bytes)
+        )
         msg = email_lib.message_from_string(header_text)
 
         message_id = msg.get("Message-ID", "").strip("<>")
         if not message_id:
             message_id = f"imap-{self.account.name}-{folder}-{uid}"
 
-        # Check if email already exists
+        to_addrs, cc_addrs, bcc_addrs = (
+            self._join_addrs(msg.get(h, "")) for h in ("To", "Cc", "Bcc")
+        )
+
         existing = self.session.execute(
             select(Email).where(Email.message_id == message_id)
         ).scalar()
 
         if existing:
-            # Update IMAP tracking
             existing.imap_uid = uid
             existing.imap_account = self.account.name
             existing.imap_folder = folder
-
-            # Update recipient columns
-            to_list = email_utils.getaddresses([msg.get("To", "")])
-            cc_list = email_utils.getaddresses([msg.get("Cc", "")])
-            bcc_list = email_utils.getaddresses([msg.get("Bcc", "")])
-            existing.to_addrs = ",".join(addr for _, addr in to_list if addr) or None
-            existing.cc_addrs = ",".join(addr for _, addr in cc_list if addr) or None
-            existing.bcc_addrs = ",".join(addr for _, addr in bcc_list if addr) or None
-
-            # Update tags from flags
-            flags = data.get(b"FLAGS", ())
-            flag_strs = [f.decode() if isinstance(f, bytes) else str(f) for f in flags]
-            labels = None
-            if self.account.provider == "gmail":
-                from mail_memex.imap.gmail import GmailExtensions
-
-                labels = GmailExtensions.extract_labels(data)
-
-            new_tags = self.tag_mapper.imap_to_tags(flag_strs, labels)
-            self._apply_tags(existing, new_tags)
+            existing.to_addrs = to_addrs
+            existing.cc_addrs = cc_addrs
+            existing.bcc_addrs = bcc_addrs
+            target = existing
             result.updated_tags += 1
         else:
-            # Create new email
-            body_text = ""
-            if isinstance(text_bytes, bytes):
-                body_text = text_bytes.decode("utf-8", errors="replace")
-            elif text_bytes:
-                body_text = str(text_bytes)
+            text_bytes = data.get(b"BODY[TEXT]", b"")
+            body_text = (
+                text_bytes.decode("utf-8", errors="replace")
+                if isinstance(text_bytes, bytes)
+                else (str(text_bytes) if text_bytes else "")
+            )
 
-            from_header = msg.get("From", "")
-            from_addr = email_lib.utils.parseaddr(from_header)[1]
-            from_name = email_lib.utils.parseaddr(from_header)[0]
+            from_name, from_addr = email_lib.utils.parseaddr(msg.get("From", ""))
 
-            date_str = msg.get("Date", "")
             try:
-                date_tuple = email_lib.utils.parsedate_to_datetime(date_str)
+                date_tuple = email_lib.utils.parsedate_to_datetime(msg.get("Date", ""))
             except Exception:
                 date_tuple = datetime.now(UTC)
 
-            to_list = email_utils.getaddresses([msg.get("To", "")])
-            cc_list = email_utils.getaddresses([msg.get("Cc", "")])
-            bcc_list = email_utils.getaddresses([msg.get("Bcc", "")])
-
-            new_email = Email(
+            target = Email(
                 message_id=message_id,
                 from_addr=from_addr or "unknown@unknown",
                 from_name=from_name or None,
@@ -237,25 +213,31 @@ class PullSync:
                 imap_uid=uid,
                 imap_account=self.account.name,
                 imap_folder=folder,
-                to_addrs=",".join(addr for _, addr in to_list if addr) or None,
-                cc_addrs=",".join(addr for _, addr in cc_list if addr) or None,
-                bcc_addrs=",".join(addr for _, addr in bcc_list if addr) or None,
+                to_addrs=to_addrs,
+                cc_addrs=cc_addrs,
+                bcc_addrs=bcc_addrs,
             )
-            self.session.add(new_email)
+            self.session.add(target)
             self.session.flush()
-
-            # Apply tags from flags
-            flags = data.get(b"FLAGS", ())
-            flag_strs = [f.decode() if isinstance(f, bytes) else str(f) for f in flags]
-            labels = None
-            if self.account.provider == "gmail":
-                from mail_memex.imap.gmail import GmailExtensions
-
-                labels = GmailExtensions.extract_labels(data)
-
-            new_tags = self.tag_mapper.imap_to_tags(flag_strs, labels)
-            self._apply_tags(new_email, new_tags)
             result.new_emails += 1
+
+        self._apply_tags(target, self._tags_from_fetch(data))
+
+    @staticmethod
+    def _join_addrs(header: str) -> str | None:
+        """Extract addresses from a To/Cc/Bcc header and join with commas."""
+        return ",".join(addr for _, addr in email_utils.getaddresses([header]) if addr) or None
+
+    def _tags_from_fetch(self, data: dict[bytes, Any]) -> set[str]:
+        """Derive mail-memex tags from an IMAP FETCH response (flags + Gmail labels)."""
+        flags = data.get(b"FLAGS", ())
+        flag_strs = [f.decode() if isinstance(f, bytes) else str(f) for f in flags]
+        labels = None
+        if self.account.provider == "gmail":
+            from mail_memex.imap.gmail import GmailExtensions
+
+            labels = GmailExtensions.extract_labels(data)
+        return self.tag_mapper.imap_to_tags(flag_strs, labels)
 
     def _apply_tags(self, email_obj: Email, tag_names: set[str]) -> None:
         """Apply tags to an email, creating Tag objects as needed."""

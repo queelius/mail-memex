@@ -41,74 +41,50 @@ class MarkdownExporter(Exporter):
 
         return result
 
+    def _write_email(self, email_data: dict[str, Any], result: ExportResult) -> None:
+        """Write a single email as its own Markdown file."""
+        try:
+            filepath = self.output_path / self._generate_filename(email_data)
+            filepath.write_text(self._format_email(email_data), encoding="utf-8")
+            result.emails_exported += 1
+        except Exception as e:
+            result.errors.append(
+                f"Error exporting {email_data.get('message_id', 'unknown')}: {e}"
+            )
+
     def _export_individual(
         self, emails: list[dict[str, Any]], result: ExportResult
     ) -> ExportResult:
         """Export each email as a separate file."""
         for email_data in emails:
-            try:
-                filename = self._generate_filename(email_data)
-                filepath = self.output_path / filename
-
-                content = self._format_email(email_data)
-                filepath.write_text(content, encoding="utf-8")
-                result.emails_exported += 1
-
-            except Exception as e:
-                result.errors.append(
-                    f"Error exporting {email_data.get('message_id', 'unknown')}: {e}"
-                )
-
+            self._write_email(email_data, result)
         return result
 
     def _export_by_thread(self, emails: list[dict[str, Any]], result: ExportResult) -> ExportResult:
         """Export emails grouped by thread."""
-        # Group by thread
         threads: dict[str, list[dict[str, Any]]] = {}
         no_thread: list[dict[str, Any]] = []
 
         for email_data in emails:
             thread_id = email_data.get("thread_id")
             if thread_id:
-                if thread_id not in threads:
-                    threads[thread_id] = []
-                threads[thread_id].append(email_data)
+                threads.setdefault(thread_id, []).append(email_data)
             else:
                 no_thread.append(email_data)
 
-        # Export threads
         for thread_id, thread_emails in threads.items():
             try:
-                # Sort by date
                 thread_emails.sort(key=lambda e: e.get("date") or datetime.min)
-
-                # Use first email's subject for filename
                 first = thread_emails[0]
                 safe_subject = self._safe_filename(first.get("subject", "no-subject"))
-                filename = f"thread_{safe_subject[:50]}.md"
-                filepath = self.output_path / filename
-
-                content = self._format_thread(thread_emails)
-                filepath.write_text(content, encoding="utf-8")
+                filepath = self.output_path / f"thread_{safe_subject[:50]}.md"
+                filepath.write_text(self._format_thread(thread_emails), encoding="utf-8")
                 result.emails_exported += len(thread_emails)
-
             except Exception as e:
                 result.errors.append(f"Error exporting thread {thread_id}: {e}")
 
-        # Export non-threaded emails individually
         for email_data in no_thread:
-            try:
-                filename = self._generate_filename(email_data)
-                filepath = self.output_path / filename
-
-                content = self._format_email(email_data)
-                filepath.write_text(content, encoding="utf-8")
-                result.emails_exported += 1
-
-            except Exception as e:
-                result.errors.append(
-                    f"Error exporting {email_data.get('message_id', 'unknown')}: {e}"
-                )
+            self._write_email(email_data, result)
 
         return result
 

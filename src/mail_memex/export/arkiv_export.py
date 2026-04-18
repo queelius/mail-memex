@@ -150,9 +150,8 @@ class ArkivExporter:
             },
         }
 
-        collection_name = self.output_path.stem
         schema = {
-            collection_name: {
+            self.output_path.stem: {
                 "record_count": record_count,
                 "metadata_keys": metadata_keys,
             }

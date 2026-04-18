@@ -9,6 +9,7 @@ from __future__ import annotations
 import mailbox
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 from mail_memex.importers.base import BaseImporter
 from mail_memex.importers.parser import EmailParser, ParsedEmail
@@ -51,39 +52,33 @@ class MboxImporter(BaseImporter):
         finally:
             mbox.close()
 
+    def _parse_mbox_message(self, msg: Any, file_path: Path, index: int) -> ParsedEmail:
+        """Parse a mailbox.mboxMessage and annotate with index + Gmail labels."""
+        parsed = self.parser.parse_bytes(bytes(msg))
+        parsed.file_path = file_path
+        parsed.raw_headers["X-Mbox-Index"] = str(index)
+        gmail_labels = msg.get("X-Gmail-Labels")
+        if gmail_labels:
+            parsed.raw_headers["X-Gmail-Labels"] = gmail_labels
+        return parsed
+
     def parse(self, path: Path) -> ParsedEmail:
         """Parse a message from the mbox.
 
         The path format is: /path/to/file.mbox#index
         """
-        # Extract index from pseudo-path
         path_str = str(path)
-        if "#" in path_str:
-            file_path, index_str = path_str.rsplit("#", 1)
-            index = int(index_str)
-        else:
+        if "#" not in path_str:
             raise ValueError(f"Invalid mbox pseudo-path: {path}")
+        file_path, index_str = path_str.rsplit("#", 1)
+        index = int(index_str)
 
         mbox = mailbox.mbox(file_path)
         try:
             msg = mbox[index]  # type: ignore[index]
             if msg is None:
                 raise ValueError(f"Message {index} not found in mbox")
-
-            # Convert to bytes for our parser
-            msg_bytes = bytes(msg)
-            parsed = self.parser.parse_bytes(msg_bytes)
-            parsed.file_path = Path(file_path)
-
-            # Store the mbox index in raw headers
-            parsed.raw_headers["X-Mbox-Index"] = str(index)
-
-            # Gmail Takeout specific: extract labels
-            gmail_labels = msg.get("X-Gmail-Labels")
-            if gmail_labels:
-                parsed.raw_headers["X-Gmail-Labels"] = gmail_labels
-
-            return parsed
+            return self._parse_mbox_message(msg, Path(file_path), index)
         finally:
             mbox.close()
 
@@ -96,17 +91,7 @@ class MboxImporter(BaseImporter):
         try:
             for i, msg in enumerate(mbox):
                 try:
-                    msg_bytes = bytes(msg)
-                    parsed = self.parser.parse_bytes(msg_bytes)
-                    parsed.file_path = self.source_path
-                    parsed.raw_headers["X-Mbox-Index"] = str(i)
-
-                    # Gmail labels
-                    gmail_labels = msg.get("X-Gmail-Labels")
-                    if gmail_labels:
-                        parsed.raw_headers["X-Gmail-Labels"] = gmail_labels
-
-                    yield parsed, None
+                    yield self._parse_mbox_message(msg, self.source_path, i), None
                 except Exception as e:
                     yield None, f"{self.source_path}#{i}: {e}"
         finally:

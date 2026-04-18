@@ -173,56 +173,50 @@ def get_record_impl(session: Any, kind: str, record_id: str) -> str:
     kind="marginalia": lookup Marginalia by uuid.
     Returns archived (soft-deleted) records too.
     """
-    valid_kinds = ("email", "thread", "marginalia")
+    from mail_memex.core.marginalia import get_marginalia
+    from mail_memex.core.models import Email, Thread
 
-    if kind not in valid_kinds:
-        return json.dumps(
-            {"error": f"Unknown kind: {kind}. Valid: {', '.join(valid_kinds)}"}
-        )
+    def _iso(dt: Any) -> Any:
+        return dt.isoformat() if dt else None
 
     if kind == "email":
-        from mail_memex.core.models import Email
-
         email = session.query(Email).filter_by(message_id=record_id).first()
-        if email is None:
-            return json.dumps({"error": "NOT_FOUND"})
-        return json.dumps(
-            {
+        record = (
+            None
+            if email is None
+            else {
                 "message_id": email.message_id,
                 "from_addr": email.from_addr,
                 "from_name": email.from_name,
                 "to_addrs": email.to_addrs,
                 "subject": email.subject,
-                "date": email.date.isoformat() if email.date else None,
+                "date": _iso(email.date),
                 "body_preview": email.body_preview,
                 "thread_id": email.thread_id,
-                "archived_at": email.archived_at.isoformat() if email.archived_at else None,
-            },
-            default=str,
+                "archived_at": _iso(email.archived_at),
+            }
         )
-
-    if kind == "thread":
-        from mail_memex.core.models import Thread
-
+    elif kind == "thread":
         thread = session.query(Thread).filter_by(thread_id=record_id).first()
-        if thread is None:
-            return json.dumps({"error": "NOT_FOUND"})
-        return json.dumps(
-            {
+        record = (
+            None
+            if thread is None
+            else {
                 "thread_id": thread.thread_id,
                 "subject": thread.subject,
                 "email_count": thread.email_count,
-                "first_date": thread.first_date.isoformat() if thread.first_date else None,
-                "last_date": thread.last_date.isoformat() if thread.last_date else None,
-                "archived_at": thread.archived_at.isoformat() if thread.archived_at else None,
-            },
-            default=str,
+                "first_date": _iso(thread.first_date),
+                "last_date": _iso(thread.last_date),
+                "archived_at": _iso(thread.archived_at),
+            }
+        )
+    elif kind == "marginalia":
+        record = get_marginalia(session, record_id)
+    else:
+        return json.dumps(
+            {"error": f"Unknown kind: {kind}. Valid: email, thread, marginalia"}
         )
 
-    # kind == "marginalia"
-    from mail_memex.core.marginalia import get_marginalia
-
-    record = get_marginalia(session, record_id)
     if record is None:
         return json.dumps({"error": "NOT_FOUND"})
     return json.dumps(record, default=str)
@@ -340,6 +334,18 @@ def create_server() -> FastMCP:
 
     # ----- Marginalia tools -----
 
+    from mail_memex.core import marginalia as mg
+
+    def _marginalia_op(fn, *args, mutates: bool, **kwargs) -> str:
+        """Run a marginalia CRUD function, commit if mutating, JSON-encode result."""
+        with db.session() as session:
+            result = fn(session, *args, **kwargs)
+            if result is None:
+                return json.dumps({"error": "NOT_FOUND"})
+            if mutates:
+                session.commit()
+            return json.dumps(result, default=str)
+
     @mcp.tool(
         name="create_marginalia",
         description="Create a new marginalia note attached to one or more target URIs (e.g. mail-memex://email/<message_id>).",
@@ -351,19 +357,15 @@ def create_server() -> FastMCP:
         color: str | None = None,
         pinned: bool = False,
     ) -> str:
-        from mail_memex.core.marginalia import create_marginalia
-
-        with db.session() as session:
-            result = create_marginalia(
-                session,
-                target_uris=target_uris,
-                content=content,
-                category=category,
-                color=color,
-                pinned=pinned,
-            )
-            session.commit()
-            return json.dumps(result, default=str)
+        return _marginalia_op(
+            mg.create_marginalia,
+            target_uris=target_uris,
+            content=content,
+            category=category,
+            color=color,
+            pinned=pinned,
+            mutates=True,
+        )
 
     @mcp.tool(
         name="list_marginalia",
@@ -374,29 +376,20 @@ def create_server() -> FastMCP:
         include_archived: bool = False,
         limit: int = 50,
     ) -> str:
-        from mail_memex.core.marginalia import list_marginalia
-
-        with db.session() as session:
-            results = list_marginalia(
-                session,
-                target_uri=target_uri,
-                include_archived=include_archived,
-                limit=limit,
-            )
-            return json.dumps(results, default=str)
+        return _marginalia_op(
+            mg.list_marginalia,
+            target_uri=target_uri,
+            include_archived=include_archived,
+            limit=limit,
+            mutates=False,
+        )
 
     @mcp.tool(
         name="get_marginalia",
         description="Fetch a single marginalia note by its UUID.",
     )
     def get_marginalia_tool(uuid: str) -> str:
-        from mail_memex.core.marginalia import get_marginalia
-
-        with db.session() as session:
-            result = get_marginalia(session, uuid)
-            if result is None:
-                return json.dumps({"error": "NOT_FOUND"})
-            return json.dumps(result, default=str)
+        return _marginalia_op(mg.get_marginalia, uuid, mutates=False)
 
     @mcp.tool(
         name="update_marginalia",
@@ -409,48 +402,28 @@ def create_server() -> FastMCP:
         color: str | None = None,
         pinned: bool | None = None,
     ) -> str:
-        from mail_memex.core.marginalia import update_marginalia
-
-        with db.session() as session:
-            result = update_marginalia(
-                session,
-                uuid=uuid,
-                content=content,
-                category=category,
-                color=color,
-                pinned=pinned,
-            )
-            if result is None:
-                return json.dumps({"error": "NOT_FOUND"})
-            session.commit()
-            return json.dumps(result, default=str)
+        return _marginalia_op(
+            mg.update_marginalia,
+            uuid=uuid,
+            content=content,
+            category=category,
+            color=color,
+            pinned=pinned,
+            mutates=True,
+        )
 
     @mcp.tool(
         name="delete_marginalia",
         description="Delete a marginalia note. Soft delete by default (sets archived_at). Pass hard=true to permanently remove.",
     )
     def delete_marginalia_tool(uuid: str, hard: bool = False) -> str:
-        from mail_memex.core.marginalia import delete_marginalia
-
-        with db.session() as session:
-            result = delete_marginalia(session, uuid=uuid, hard=hard)
-            if result is None:
-                return json.dumps({"error": "NOT_FOUND"})
-            session.commit()
-            return json.dumps(result, default=str)
+        return _marginalia_op(mg.delete_marginalia, uuid=uuid, hard=hard, mutates=True)
 
     @mcp.tool(
         name="restore_marginalia",
         description="Undo a soft delete on a marginalia note by clearing archived_at.",
     )
     def restore_marginalia_tool(uuid: str) -> str:
-        from mail_memex.core.marginalia import restore_marginalia
-
-        with db.session() as session:
-            result = restore_marginalia(session, uuid=uuid)
-            if result is None:
-                return json.dumps({"error": "NOT_FOUND"})
-            session.commit()
-            return json.dumps(result, default=str)
+        return _marginalia_op(mg.restore_marginalia, uuid=uuid, mutates=True)
 
     return mcp

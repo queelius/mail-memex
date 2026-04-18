@@ -198,6 +198,47 @@ class SearchEngine:
                 continue
         return None
 
+    def _filter_conditions(self, query: SearchQuery) -> list:
+        """Build SQLAlchemy field-filter conditions from a SearchQuery.
+
+        Covers everything except free-text (which FTS5 and LIKE handle
+        differently). Always filters out soft-deleted emails.
+        """
+        from mail_memex.core.models import Attachment
+
+        conditions: list = [Email.archived_at.is_(None)]
+
+        if query.from_addr:
+            conditions.append(Email.from_addr.ilike(f"%{query.from_addr}%"))
+        if query.to_addr:
+            conditions.append(Email.to_addrs.ilike(f"%{query.to_addr}%"))
+        if query.subject:
+            conditions.append(Email.subject.ilike(f"%{query.subject}%"))
+        if query.date_from:
+            conditions.append(Email.date >= query.date_from)
+        if query.date_to:
+            conditions.append(Email.date <= query.date_to)
+        if query.thread_id:
+            conditions.append(Email.thread_id == query.thread_id)
+        if query.has_attachment:
+            conditions.append(Email.id.in_(select(Attachment.email_id).distinct()))
+        for tag_name in query.has_tags:
+            tag_subq = (
+                select(email_tags.c.email_id)
+                .join(Tag, Tag.id == email_tags.c.tag_id)
+                .where(Tag.name == tag_name)
+            )
+            conditions.append(Email.id.in_(tag_subq))
+        for tag_name in query.not_tags:
+            tag_subq = (
+                select(email_tags.c.email_id)
+                .join(Tag, Tag.id == email_tags.c.tag_id)
+                .where(Tag.name == tag_name)
+            )
+            conditions.append(Email.id.notin_(tag_subq))
+
+        return conditions
+
     def _fts5_search(
         self,
         query: SearchQuery,
@@ -221,50 +262,11 @@ class SearchEngine:
             # FTS5 query failed or no results — fall back to LIKE
             return self._like_search(query, limit, offset, "relevance")
 
-        # Get the email IDs from FTS results
         fts_email_ids = [r["email_id"] for r in fts_results]
         fts_lookup = {r["email_id"]: r for r in fts_results}
 
-        # Build field-filter conditions
-        conditions = [Email.id.in_(fts_email_ids)]
-        conditions.append(Email.archived_at.is_(None))
-
-        if query.from_addr:
-            conditions.append(Email.from_addr.ilike(f"%{query.from_addr}%"))
-        if query.to_addr:
-            conditions.append(Email.to_addrs.ilike(f"%{query.to_addr}%"))
-        if query.subject:
-            conditions.append(Email.subject.ilike(f"%{query.subject}%"))
-        if query.date_from:
-            conditions.append(Email.date >= query.date_from)
-        if query.date_to:
-            conditions.append(Email.date <= query.date_to)
-        if query.thread_id:
-            conditions.append(Email.thread_id == query.thread_id)
-        if query.has_attachment:
-            from mail_memex.core.models import Attachment
-
-            subq = select(Attachment.email_id).distinct()
-            conditions.append(Email.id.in_(subq))
-        if query.has_tags:
-            for tag_name in query.has_tags:
-                tag_subq = (
-                    select(email_tags.c.email_id)
-                    .join(Tag, Tag.id == email_tags.c.tag_id)
-                    .where(Tag.name == tag_name)
-                )
-                conditions.append(Email.id.in_(tag_subq))
-        if query.not_tags:
-            for tag_name in query.not_tags:
-                tag_subq = (
-                    select(email_tags.c.email_id)
-                    .join(Tag, Tag.id == email_tags.c.tag_id)
-                    .where(Tag.name == tag_name)
-                )
-                conditions.append(Email.id.notin_(tag_subq))
-
-        stmt = select(Email).where(and_(*conditions))
-        emails = self.session.execute(stmt).scalars().all()
+        conditions = [Email.id.in_(fts_email_ids), *self._filter_conditions(query)]
+        emails = self.session.execute(select(Email).where(and_(*conditions))).scalars().all()
 
         # Build results sorted by FTS5 rank (lower = better match)
         results = []
@@ -305,10 +307,8 @@ class SearchEngine:
         order_by: str,
     ) -> list[SearchResult]:
         """Perform keyword-based search using SQLite LIKE (fallback)."""
-        conditions = []
-        conditions.append(Email.archived_at.is_(None))
+        conditions = self._filter_conditions(query)
 
-        # Free text search (subject + body)
         if query.text:
             text_pattern = f"%{query.text}%"
             conditions.append(
@@ -319,66 +319,13 @@ class SearchEngine:
                 )
             )
 
-        # From address
-        if query.from_addr:
-            conditions.append(Email.from_addr.ilike(f"%{query.from_addr}%"))
-
-        # To address
-        if query.to_addr:
-            conditions.append(Email.to_addrs.ilike(f"%{query.to_addr}%"))
-
-        # Subject
-        if query.subject:
-            conditions.append(Email.subject.ilike(f"%{query.subject}%"))
-
-        # Date range
-        if query.date_from:
-            conditions.append(Email.date >= query.date_from)
-        if query.date_to:
-            conditions.append(Email.date <= query.date_to)
-
-        # Thread
-        if query.thread_id:
-            conditions.append(Email.thread_id == query.thread_id)
-
-        # Has attachment
-        if query.has_attachment:
-            # Check if email has attachments in the attachments table
-            from mail_memex.core.models import Attachment
-
-            subq = select(Attachment.email_id).distinct()
-            conditions.append(Email.id.in_(subq))
-
-        # Tags
-        if query.has_tags:
-            for tag_name in query.has_tags:
-                tag_subq = (
-                    select(email_tags.c.email_id)
-                    .join(Tag, Tag.id == email_tags.c.tag_id)
-                    .where(Tag.name == tag_name)
-                )
-                conditions.append(Email.id.in_(tag_subq))
-
-        if query.not_tags:
-            for tag_name in query.not_tags:
-                tag_subq = (
-                    select(email_tags.c.email_id)
-                    .join(Tag, Tag.id == email_tags.c.tag_id)
-                    .where(Tag.name == tag_name)
-                )
-                conditions.append(Email.id.notin_(tag_subq))
-
-        # Build query
-        stmt = select(Email)
-        if conditions:
-            stmt = stmt.where(and_(*conditions))
-
-        # Order by date (newest first) - for keyword search, recency serves as relevance
-        stmt = stmt.order_by(Email.date.desc())
-
-        stmt = stmt.limit(limit).offset(offset)
-
-        # Execute
+        stmt = (
+            select(Email)
+            .where(and_(*conditions))
+            .order_by(Email.date.desc())
+            .limit(limit)
+            .offset(offset)
+        )
         emails = self.session.execute(stmt).scalars().all()
 
         # Build results
