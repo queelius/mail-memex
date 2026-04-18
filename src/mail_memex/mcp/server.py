@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import json
 import os
-import re
+import sqlite3
 from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP
+from sqlalchemy import text
 
 from mail_memex.core.config import MailMemexConfig
 from mail_memex.core.database import Database
@@ -66,11 +67,60 @@ QUERY_TIPS: list[str] = [
 ]
 
 # ---------------------------------------------------------------------------
-# Regex patterns for SQL safety
+# SQL safety via sqlite3 authorizer callback
+#
+# sqlite3's authorizer runs at statement-prepare time against the parsed AST,
+# so string literals, comments, and case variations cannot defeat it — unlike
+# regex against raw SQL. The callback receives a numeric action code (one of
+# the SQLITE_* constants below) and returns SQLITE_OK / SQLITE_DENY.
 # ---------------------------------------------------------------------------
 
-_DDL_PATTERN = re.compile(r"\b(DROP|ALTER|CREATE|ATTACH|DETACH)\b", re.IGNORECASE)
-_WRITE_PATTERN = re.compile(r"\b(INSERT|UPDATE|DELETE|REPLACE)\b", re.IGNORECASE)
+
+def _codes(*names: str) -> frozenset[int]:
+    return frozenset(
+        code for code in (getattr(sqlite3, n, None) for n in names) if code is not None
+    )
+
+
+_DDL_ACTIONS = _codes(
+    "SQLITE_CREATE_INDEX", "SQLITE_CREATE_TABLE",
+    "SQLITE_CREATE_TEMP_INDEX", "SQLITE_CREATE_TEMP_TABLE",
+    "SQLITE_CREATE_TEMP_TRIGGER", "SQLITE_CREATE_TEMP_VIEW",
+    "SQLITE_CREATE_TRIGGER", "SQLITE_CREATE_VIEW",
+    "SQLITE_DROP_INDEX", "SQLITE_DROP_TABLE",
+    "SQLITE_DROP_TEMP_INDEX", "SQLITE_DROP_TEMP_TABLE",
+    "SQLITE_DROP_TEMP_TRIGGER", "SQLITE_DROP_TEMP_VIEW",
+    "SQLITE_DROP_TRIGGER", "SQLITE_DROP_VIEW",
+    "SQLITE_ALTER_TABLE", "SQLITE_REINDEX",
+    "SQLITE_ATTACH", "SQLITE_DETACH",
+)
+
+_WRITE_ACTIONS = _codes("SQLITE_INSERT", "SQLITE_UPDATE", "SQLITE_DELETE")
+
+
+class _AuthContext:
+    """Per-call authorizer state: remembers why the last statement was denied."""
+
+    def __init__(self, readonly: bool) -> None:
+        self.readonly = readonly
+        self.reason: str | None = None
+
+    def __call__(
+        self, action: int, arg1: Any, arg2: Any, db_name: Any, trigger: Any
+    ) -> int:
+        if action in _DDL_ACTIONS:
+            self.reason = (
+                "DDL statements (DROP/ALTER/CREATE/ATTACH/DETACH/REINDEX) "
+                "are not allowed"
+            )
+            return sqlite3.SQLITE_DENY
+        if self.readonly and action in _WRITE_ACTIONS:
+            self.reason = (
+                "Write statements (INSERT/UPDATE/DELETE) are blocked in "
+                "readonly mode. Set readonly=false to allow."
+            )
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
 
 
 # ---------------------------------------------------------------------------
@@ -131,38 +181,26 @@ def execute_sql_impl(session: Any, sql: str, readonly: bool = True) -> str:
     For SELECT/PRAGMA: returns a JSON array of row objects.
     For writes (when readonly=False): returns {"affected_rows": N}.
     On error: returns {"error": "message"}.
-    DDL (DROP/ALTER/CREATE/ATTACH/DETACH) is always blocked.
+
+    DDL and (in readonly mode) writes are blocked by sqlite3's authorizer
+    callback — statement-level enforcement that cannot be defeated by
+    string literals, comments, or case variations.
     """
-    if _DDL_PATTERN.search(sql):
-        return json.dumps(
-            {"error": "DDL statements (DROP/ALTER/CREATE/ATTACH/DETACH) are not allowed"}
-        )
-
-    if readonly and _WRITE_PATTERN.search(sql):
-        return json.dumps(
-            {
-                "error": "Write statements (INSERT/UPDATE/DELETE/REPLACE) are blocked in readonly mode. Set readonly=false to allow."
-            }
-        )
-
+    raw = session.connection().connection.driver_connection
+    ctx = _AuthContext(readonly=readonly)
+    raw.set_authorizer(ctx)
     try:
-        conn = session.connection()
-        raw = conn.connection.driver_connection
-        cursor = raw.execute(sql)
-
-        if _WRITE_PATTERN.search(sql):
-            raw.commit()
-            return json.dumps({"affected_rows": cursor.rowcount})
-
-        if cursor.description:
-            columns = [desc[0] for desc in cursor.description]
-            rows = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+        result = session.execute(text(sql))
+        if result.returns_rows:
+            rows = [dict(row._mapping) for row in result]
             return json.dumps(rows, default=str)
-
-        return json.dumps([])
-
+        return json.dumps({"affected_rows": result.rowcount})
     except Exception as e:
+        if ctx.reason is not None:
+            return json.dumps({"error": ctx.reason})
         return json.dumps({"error": str(e)})
+    finally:
+        raw.set_authorizer(None)
 
 
 def get_record_impl(session: Any, kind: str, record_id: str) -> str:

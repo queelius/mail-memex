@@ -142,6 +142,63 @@ class TestExecuteSQL:
             assert isinstance(result, list)
             assert len(result) > 0
 
+    def test_ddl_keyword_in_string_literal_not_blocked(self, mcp_db: Database) -> None:
+        """Regression: a string value containing 'DROP TABLE' or 'CREATE' is data,
+        not DDL, and must reach the database."""
+        from mail_memex.mcp.server import execute_sql_impl
+
+        with mcp_db.session() as session:
+            result = json.loads(
+                execute_sql_impl(
+                    session,
+                    "INSERT INTO tags (name, source) VALUES ('DROP TABLE lore', 'mail-memex')",
+                    readonly=False,
+                )
+            )
+            assert "affected_rows" in result, result
+
+    def test_ddl_keyword_in_comment_not_blocked(self, mcp_db: Database) -> None:
+        """Regression: a comment mentioning 'CREATE' must not block a SELECT."""
+        from mail_memex.mcp.server import execute_sql_impl
+
+        with mcp_db.session() as session:
+            result = json.loads(
+                execute_sql_impl(
+                    session,
+                    "SELECT message_id FROM emails /* could CREATE an index here */",
+                )
+            )
+            assert isinstance(result, list), result
+
+    def test_write_leaves_session_usable(self, mcp_db: Database) -> None:
+        """Regression: execute_sql writes must not corrupt SQLAlchemy session state.
+        After the write, the same session must still be usable for ORM queries."""
+        from mail_memex.core.models import Email
+        from mail_memex.mcp.server import execute_sql_impl
+
+        with mcp_db.session() as session:
+            result = json.loads(
+                execute_sql_impl(
+                    session,
+                    "INSERT INTO tags (name, source) VALUES ('post-op', 'mail-memex')",
+                    readonly=False,
+                )
+            )
+            assert result.get("affected_rows") == 1
+            # ORM query on the same session must still work
+            emails = session.query(Email).all()
+            assert len(emails) == 1
+
+    def test_mixed_case_ddl_blocked(self, mcp_db: Database) -> None:
+        """Authorizer is parser-based, so case variations are naturally handled."""
+        from mail_memex.mcp.server import execute_sql_impl
+
+        with mcp_db.session() as session:
+            result = json.loads(
+                execute_sql_impl(session, "cReAtE TaBlE evil (id INTEGER)", readonly=False)
+            )
+            assert "error" in result
+
 
 # =============================================================================
 # TestGetSchema
