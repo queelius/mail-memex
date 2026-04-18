@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from mail_memex.core.models import Email, ImapSyncState, Tag
 
@@ -108,6 +108,9 @@ class PullSync:
         uids = [uid for uid in uids if uid > state.last_uid]
 
         if not uids:
+            # No new UIDs, but still refresh message_count in case prior
+            # pulls or soft-deletes changed the live count.
+            state.message_count = self._count_emails_in_folder(folder)
             state.last_sync = datetime.now(UTC)
             self.session.commit()
             return result
@@ -134,10 +137,13 @@ class PullSync:
                 except Exception as e:
                     result.errors.append(f"Failed to process UID {uid}: {e}")
 
-        # Update sync state
+        # Update sync state. message_count is the CUMULATIVE count of live
+        # emails we have for this (account, folder), derived from the
+        # authoritative emails table — not incremented per-pull. This
+        # survives UIDVALIDITY resets, re-imports, and soft-deletes.
         if uids:
             state.last_uid = max(uids)
-        state.message_count = result.new_emails
+        state.message_count = self._count_emails_in_folder(folder)
         state.last_sync = datetime.now(UTC)
 
         # Update HIGHESTMODSEQ if server supports CONDSTORE
@@ -268,6 +274,19 @@ class PullSync:
             self.session.flush()
 
         return state
+
+    def _count_emails_in_folder(self, folder: str) -> int:
+        """Count live (non-archived) emails for this account+folder. Single
+        source of truth for ImapSyncState.message_count — incremented
+        counters drift across pulls, UIDVALIDITY resets, and soft-deletes."""
+        count = self.session.execute(
+            select(func.count(Email.id)).where(
+                Email.imap_account == self.account.name,
+                Email.imap_folder == folder,
+                Email.archived_at.is_(None),
+            )
+        ).scalar()
+        return count or 0
 
     def _clear_folder_state(self, folder: str) -> None:
         """Clear IMAP tracking for emails in a folder (UIDVALIDITY reset)."""

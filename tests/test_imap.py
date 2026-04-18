@@ -870,6 +870,77 @@ class TestPullSync:
             assert state.last_uid == 0
             assert state.uid_validity is None
 
+    def test_count_emails_in_folder_filters_account_and_folder(
+        self, imap_populated_db: Database, imap_account: ImapAccountConfig
+    ) -> None:
+        """_count_emails_in_folder must count only emails matching the
+        account and folder — not other IMAP accounts, other folders, or
+        non-IMAP (local) emails."""
+        from mail_memex.imap.pull import PullSync
+
+        with imap_populated_db.session() as session:
+            pull = PullSync(session, imap_account, TagMapper())
+            # imap_populated_db has two test/INBOX emails and one local email.
+            assert pull._count_emails_in_folder("INBOX") == 2
+            # Wrong folder: zero.
+            assert pull._count_emails_in_folder("Sent") == 0
+
+    def test_count_emails_in_folder_excludes_archived(
+        self, imap_populated_db: Database, imap_account: ImapAccountConfig
+    ) -> None:
+        """Soft-deleted emails must not be counted — they're invisible by
+        convention, and including them would make 'Messages: N' lie to
+        the user about how many live messages they have."""
+        from mail_memex.imap.pull import PullSync
+
+        with imap_populated_db.session() as session:
+            imap1 = session.execute(
+                select(Email).where(Email.message_id == "imap1@example.com")
+            ).scalar()
+            imap1.archived_at = datetime(2024, 2, 1)
+            session.commit()
+
+        with imap_populated_db.session() as session:
+            pull = PullSync(session, imap_account, TagMapper())
+            assert pull._count_emails_in_folder("INBOX") == 1
+
+    def test_message_count_is_cumulative_not_last_pull(
+        self, imap_populated_db: Database, imap_account: ImapAccountConfig
+    ) -> None:
+        """Regression: state.message_count = result.new_emails clobbered
+        the cumulative total on every pull — after a second pull that
+        found only 1 new email, 'Messages: 1' would have been reported
+        even when 50+ were actually stored. Cumulative count is derived
+        from the emails table.
+
+        We verify this by running pull_folder's post-pull state update
+        against a pre-populated folder: even with zero new UIDs, the
+        count must reflect the live total (2 in the fixture)."""
+        from unittest.mock import MagicMock
+
+        from mail_memex.imap.pull import PullSync
+
+        # Mock IMAP client that reports no new UIDs — forces the
+        # "if not uids" early-return branch.
+        client = MagicMock()
+        client.select_folder.return_value = {b"UIDVALIDITY": 12345}
+        client.search.return_value = []
+
+        with imap_populated_db.session() as session:
+            pull = PullSync(session, imap_account, TagMapper())
+            pull.pull_folder(client, "INBOX")
+
+        # After the pull with zero new emails, message_count reflects
+        # the LIVE total (2), not result.new_emails (0).
+        with imap_populated_db.session() as session:
+            state = session.execute(
+                select(ImapSyncState).where(
+                    ImapSyncState.account_name == "test",
+                    ImapSyncState.folder == "INBOX",
+                )
+            ).scalar()
+            assert state.message_count == 2
+
     def test_get_sync_state_returns_existing(
         self, imap_populated_db: Database, imap_account: ImapAccountConfig
     ) -> None:
