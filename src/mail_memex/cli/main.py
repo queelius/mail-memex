@@ -185,78 +185,153 @@ def import_gmail(
     _run_import_with_importer(importer, db, json_output=json)
 
 
-def _build_threads(session) -> int:
-    """Build conversation threads from email references.
+def _resolve_thread_root(email, session) -> str | None:
+    """Walk In-Reply-To and References from an email up to its earliest
+    ancestor that exists in the archive.
 
-    Groups emails into threads based on In-Reply-To and References headers.
-    Returns the number of threads created/updated.
+    Returns the root's message_id, or None if no ancestor is in the archive
+    (dangling reply — will stay un-threaded until the parent is imported).
+
+    Cycles are broken defensively by tracking visited message_ids.
     """
     from sqlalchemy import select
 
+    from mail_memex.core.models import Email
+
+    current = email
+    visited: set[str] = set()
+    while True:
+        if current.message_id in visited:
+            return current.message_id  # cycle — stop here
+        visited.add(current.message_id)
+
+        # Candidate parent IDs, in preference order: In-Reply-To first
+        # (immediate parent), then References walking newest-to-oldest.
+        parent_ids: list[str] = []
+        if current.in_reply_to:
+            parent_ids.append(current.in_reply_to.strip("<>"))
+        for ref in reversed((current.references or "").split()):
+            ref = ref.strip("<>")
+            if ref and ref not in parent_ids:
+                parent_ids.append(ref)
+
+        next_ancestor = None
+        for pid in parent_ids:
+            if pid in visited:
+                continue
+            found = session.execute(
+                select(Email).where(Email.message_id == pid)
+            ).scalar()
+            if found is not None:
+                next_ancestor = found
+                break
+
+        if next_ancestor is None:
+            return None if current is email else current.message_id
+        current = next_ancestor
+
+
+def _build_threads(session) -> int:
+    """Build conversation threads from In-Reply-To and References headers.
+
+    Three-pass algorithm:
+      1. Find all un-threaded emails that have a parent reference. For each,
+         resolve the earliest ancestor in the archive.
+      2. Assign thread_id to every child + its root in a single pass.
+      3. Recompute email_count/first_date/last_date for each touched thread
+         from a single SQL aggregate — the authoritative source is the
+         emails table, not an incremented counter.
+
+    Emails without any parent reference, and replies whose ancestors are not
+    in the archive, remain un-threaded (thread_id=NULL) by design.
+
+    The caller's db.session() context manager commits; this function does not.
+
+    Returns the number of Thread rows created (existing threads are updated
+    in place rather than duplicated).
+    """
+    from collections import defaultdict
+
+    from sqlalchemy import func, or_, select
+
     from mail_memex.core.models import Email, Thread
 
-    threads_created = 0
-    processed = True
-
-    # Keep processing until no more changes (handles multi-level threads)
-    while processed:
-        processed = False
-
-        # Get emails without thread_id that have In-Reply-To
-        emails_needing_threads = (
-            session.execute(
-                select(Email)
-                .where(Email.thread_id.is_(None), Email.in_reply_to.isnot(None))
-                .order_by(Email.date)  # Process oldest first
+    candidates = (
+        session.execute(
+            select(Email).where(
+                Email.thread_id.is_(None),
+                or_(Email.in_reply_to.isnot(None), Email.references.isnot(None)),
             )
-            .scalars()
-            .all()
         )
+        .scalars()
+        .all()
+    )
 
-        for email in emails_needing_threads:
-            # Find the parent email by In-Reply-To
-            parent_msg_id = email.in_reply_to.strip("<>") if email.in_reply_to else None
-            if not parent_msg_id:
-                continue
+    roots: dict[str, list[Email]] = defaultdict(list)
+    for email in candidates:
+        root_id = _resolve_thread_root(email, session)
+        if root_id is not None:
+            roots[root_id].append(email)
 
-            parent = session.execute(
-                select(Email).where(Email.message_id == parent_msg_id)
+    if not roots:
+        return 0
+
+    # Pass A: ensure a Thread row exists for each root BEFORE any email is
+    # re-assigned. emails.thread_id has a FK to threads.thread_id, so the
+    # parent row must be present first.
+    threads_created = 0
+    for root_id in roots:
+        thread_id = f"thread-{root_id}"
+        existing = session.execute(
+            select(Thread).where(Thread.thread_id == thread_id)
+        ).scalar()
+        if existing is None:
+            root = session.execute(
+                select(Email).where(Email.message_id == root_id)
             ).scalar()
-
-            if parent and parent.thread_id:
-                # Parent already has a thread, join it
-                email.thread_id = parent.thread_id
-                # Update thread stats
-                thread = session.execute(
-                    select(Thread).where(Thread.thread_id == parent.thread_id)
-                ).scalar()
-                if thread:
-                    thread.email_count += 1
-                    if email.date and (not thread.last_date or email.date > thread.last_date):
-                        thread.last_date = email.date
-                session.flush()
-                processed = True
-            elif parent:
-                # Parent exists but no thread yet - create one
-                thread_id = f"thread-{parent.message_id}"
-                thread = Thread(
+            session.add(
+                Thread(
                     thread_id=thread_id,
-                    subject=parent.subject,
-                    email_count=2,
-                    first_date=parent.date,
-                    last_date=email.date
-                    if email.date and parent.date and email.date > parent.date
-                    else parent.date,
+                    subject=root.subject if root is not None else None,
                 )
-                session.add(thread)
-                parent.thread_id = thread_id
-                email.thread_id = thread_id
-                session.flush()  # Flush so subsequent queries see this
-                threads_created += 1
-                processed = True
-            # If parent not found, skip for now (might be imported later)
+            )
+            threads_created += 1
+    session.flush()
 
-    session.commit()
+    # Pass B: assign thread_id on every child + its root.
+    for root_id, emails in roots.items():
+        thread_id = f"thread-{root_id}"
+        for email in emails:
+            email.thread_id = thread_id
+        root = session.execute(
+            select(Email).where(Email.message_id == root_id)
+        ).scalar()
+        if root is not None and root.thread_id != thread_id:
+            root.thread_id = thread_id
+    session.flush()
+
+    # Pass C: recompute stats from the authoritative emails table.
+    for root_id in roots:
+        thread_id = f"thread-{root_id}"
+        thread = session.execute(
+            select(Thread).where(Thread.thread_id == thread_id)
+        ).scalar()
+        if thread is None:
+            continue
+        count, first_date, last_date = session.execute(
+            select(
+                func.count(Email.id),
+                func.min(Email.date),
+                func.max(Email.date),
+            ).where(
+                Email.thread_id == thread_id,
+                Email.archived_at.is_(None),
+            )
+        ).one()
+        thread.email_count = count or 0
+        thread.first_date = first_date
+        thread.last_date = last_date
+
     return threads_created
 
 
