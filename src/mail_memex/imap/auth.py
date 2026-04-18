@@ -6,11 +6,18 @@ Credentials stored in system keyring (never in config files).
 from __future__ import annotations
 
 import contextlib
+from datetime import UTC, datetime, timedelta
 from types import ModuleType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from mail_memex.imap.account import ImapAccountConfig
+
+
+# Refresh OAuth2 access tokens this many seconds before their expiry —
+# avoids an edge-of-expiration race where the token looks valid to us
+# but Google rejects it. Google's tokens default to 1-hour lifetime.
+_OAUTH_REFRESH_BUFFER_SEC = 60
 
 
 class AuthManager:
@@ -62,11 +69,20 @@ class GmailOAuth2:
     def __init__(self, account: ImapAccountConfig) -> None:
         self.account = account
         self._auth_manager = AuthManager()
+        # Cache the Credentials object across calls so we don't force a
+        # network refresh on every IMAP operation. Refresh is re-issued
+        # only when the cached access token is missing or within
+        # _OAUTH_REFRESH_BUFFER_SEC of expiry.
+        self._creds: Any | None = None
 
     def get_access_token(self) -> str | None:
         """Get a valid OAuth2 access token.
 
-        Returns None if no refresh token is stored.
+        The access token is cached in-memory and re-used for the full
+        lifetime Google grants it (typically 1 hour). Only a near-expiry
+        call or the first call forces a network refresh.
+
+        Returns None if no refresh token is stored or the refresh fails.
         """
         refresh_token = self._auth_manager.get_password(self.account)
         if not refresh_token:
@@ -76,17 +92,38 @@ class GmailOAuth2:
             from google.auth.transport.requests import Request
             from google.oauth2.credentials import Credentials
 
-            creds = Credentials(  # type: ignore[no-untyped-call]
-                token=None,
-                refresh_token=refresh_token,
-                token_uri="https://oauth2.googleapis.com/token",
-                client_id=self._get_client_id(),
-                client_secret=self._get_client_secret(),
-            )
-            creds.refresh(Request())  # type: ignore[no-untyped-call]
-            return creds.token
+            # Rebuild the Credentials object if we don't have one yet or
+            # if the stored refresh token changed (user re-authorized).
+            if self._creds is None or self._creds.refresh_token != refresh_token:
+                self._creds = Credentials(  # type: ignore[no-untyped-call]
+                    token=None,
+                    refresh_token=refresh_token,
+                    token_uri="https://oauth2.googleapis.com/token",
+                    client_id=self._get_client_id(),
+                    client_secret=self._get_client_secret(),
+                )
+
+            if self._needs_refresh(self._creds):
+                self._creds.refresh(Request())  # type: ignore[no-untyped-call]
+
+            return self._creds.token
         except Exception:
+            self._creds = None  # invalidate so the next call retries clean
             return None
+
+    @staticmethod
+    def _needs_refresh(creds: Any) -> bool:
+        """True if the cached credentials need a network refresh.
+
+        Refresh if the access token is missing, the expiry is unknown, or
+        we're within the refresh buffer of expiry. Google's Credentials
+        stores expiry as a naive UTC datetime per library convention, so
+        we compare against a tz-stripped now.
+        """
+        if creds.token is None or creds.expiry is None:
+            return True
+        now_naive = datetime.now(UTC).replace(tzinfo=None)
+        return now_naive + timedelta(seconds=_OAUTH_REFRESH_BUFFER_SEC) >= creds.expiry
 
     def authorize(self, client_id: str, client_secret: str) -> str:
         """Run OAuth2 authorization flow.

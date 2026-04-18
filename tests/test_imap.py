@@ -12,7 +12,8 @@ Tests cover:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -446,67 +447,179 @@ class TestAuthManager:
 class TestGmailOAuth2:
     """Tests for Gmail OAuth2 token management."""
 
-    def test_get_access_token_with_refresh_token(self, gmail_account: ImapAccountConfig) -> None:
-        """get_access_token should use refresh token to get access token."""
+    def _make_oauth(
+        self, account: ImapAccountConfig, refresh_token: str | None = "refresh_token_xyz"
+    ) -> Any:
+        """Build a GmailOAuth2 instance bypassing __init__ (keyring isn't
+        available in test env). Provide a mocked auth manager and empty
+        credential cache, matching what __init__ would set up."""
         from mail_memex.imap.auth import GmailOAuth2
 
+        oauth = GmailOAuth2.__new__(GmailOAuth2)
+        oauth.account = account
+        mock_auth_mgr = MagicMock()
+        mock_auth_mgr.get_password.return_value = refresh_token
+        oauth._auth_manager = mock_auth_mgr
+        oauth._creds = None
+        oauth._get_client_id = lambda: "client_id"
+        oauth._get_client_secret = lambda: "client_secret"
+        return oauth
+
+    def _valid_creds_mock(self, token: str = "access_token_123") -> MagicMock:
+        """Build a Credentials mock that _needs_refresh() will NOT re-refresh.
+        expiry is in the future beyond the refresh buffer."""
         mock_creds = MagicMock()
-        mock_creds.token = "access_token_123"
+        mock_creds.token = token
+        mock_creds.refresh_token = "refresh_token_xyz"
+        mock_creds.expiry = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=1)
+        return mock_creds
+
+    def test_get_access_token_with_refresh_token(self, gmail_account: ImapAccountConfig) -> None:
+        """get_access_token should use refresh token to get access token on
+        the first call (no cached creds yet)."""
+        from mail_memex.imap.auth import GmailOAuth2
+
+        mock_creds = self._valid_creds_mock()
+        # Clear the cached token so the first call refreshes.
+        mock_creds.token = None
+
+        def refresh_side_effect(_req: Any) -> None:
+            mock_creds.token = "access_token_123"
+
+        mock_creds.refresh.side_effect = refresh_side_effect
 
         with (
-            patch.object(GmailOAuth2, "__init__", lambda self, account: None),
-            patch("mail_memex.imap.auth.AuthManager"),
             patch("google.oauth2.credentials.Credentials", return_value=mock_creds),
             patch("google.auth.transport.requests.Request"),
         ):
-            oauth = GmailOAuth2.__new__(GmailOAuth2)
-            oauth.account = gmail_account
-            mock_auth_mgr = MagicMock()
-            mock_auth_mgr.get_password.return_value = "refresh_token_xyz"
-            oauth._auth_manager = mock_auth_mgr
-
+            oauth = self._make_oauth(gmail_account)
             result = oauth.get_access_token()
-            assert result == "access_token_123"
-            mock_creds.refresh.assert_called_once()
+
+        assert result == "access_token_123"
+        mock_creds.refresh.assert_called_once()
+        assert isinstance(oauth, GmailOAuth2)
 
     def test_get_access_token_returns_none_without_refresh_token(
         self, gmail_account: ImapAccountConfig
     ) -> None:
         """get_access_token should return None if no refresh token is stored."""
-        from mail_memex.imap.auth import GmailOAuth2
-
-        oauth = GmailOAuth2.__new__(GmailOAuth2)
-        oauth.account = gmail_account
-        mock_auth_mgr = MagicMock()
-        mock_auth_mgr.get_password.return_value = None
-        oauth._auth_manager = mock_auth_mgr
-
-        result = oauth.get_access_token()
-        assert result is None
+        oauth = self._make_oauth(gmail_account, refresh_token=None)
+        assert oauth.get_access_token() is None
 
     def test_get_access_token_returns_none_on_error(self, gmail_account: ImapAccountConfig) -> None:
-        """get_access_token should return None when refresh fails."""
-        from mail_memex.imap.auth import GmailOAuth2
-
+        """get_access_token should return None when refresh fails, and the
+        cache should be invalidated so the next call retries clean."""
         mock_creds = MagicMock()
+        mock_creds.token = None
+        mock_creds.expiry = None  # force refresh path
+        mock_creds.refresh_token = "refresh_token_xyz"
         mock_creds.refresh.side_effect = Exception("Network error")
 
         with (
             patch("google.oauth2.credentials.Credentials", return_value=mock_creds),
             patch("google.auth.transport.requests.Request"),
         ):
-            oauth = GmailOAuth2.__new__(GmailOAuth2)
-            oauth.account = gmail_account
-            mock_auth_mgr = MagicMock()
-            mock_auth_mgr.get_password.return_value = "refresh_token_xyz"
-            oauth._auth_manager = mock_auth_mgr
+            oauth = self._make_oauth(gmail_account)
+            assert oauth.get_access_token() is None
+            assert oauth._creds is None, "failed refresh must clear the cache"
 
-            # Patch the env methods
-            oauth._get_client_id = lambda: "client_id"
-            oauth._get_client_secret = lambda: "client_secret"
+    def test_access_token_cached_across_calls(
+        self, gmail_account: ImapAccountConfig
+    ) -> None:
+        """Regression: creds.refresh() used to fire on EVERY IMAP operation
+        (multi-folder sync would re-refresh per folder, hitting Google
+        rate limits). With caching, the access token is reused for its
+        full lifetime."""
+        from mail_memex.imap.auth import GmailOAuth2
 
-            result = oauth.get_access_token()
-            assert result is None
+        mock_creds = self._valid_creds_mock()
+
+        with (
+            patch("google.oauth2.credentials.Credentials", return_value=mock_creds),
+            patch("google.auth.transport.requests.Request"),
+        ):
+            oauth = self._make_oauth(gmail_account)
+            # First call: creds constructed, refresh issued once to populate token.
+            # Subsequent calls: cache hit, no further refresh.
+            mock_creds.token = None
+
+            def first_refresh(_req: Any) -> None:
+                mock_creds.token = "tok-1"
+
+            mock_creds.refresh.side_effect = first_refresh
+            assert oauth.get_access_token() == "tok-1"
+            assert isinstance(oauth, GmailOAuth2)
+
+            for _ in range(5):
+                assert oauth.get_access_token() == "tok-1"
+
+        assert mock_creds.refresh.call_count == 1, (
+            "refresh fired more than once — caching is broken"
+        )
+
+    def test_refresh_when_near_expiry(self, gmail_account: ImapAccountConfig) -> None:
+        """When the cached token is close to expiry (within the buffer), the
+        next call must re-refresh rather than hand back a soon-dead token."""
+        mock_creds = MagicMock()
+        mock_creds.token = "tok-old"
+        mock_creds.refresh_token = "refresh_token_xyz"
+        # 10 seconds from now — inside the 60-second refresh buffer.
+        mock_creds.expiry = datetime.now(UTC).replace(tzinfo=None) + timedelta(seconds=10)
+
+        def refresh_side_effect(_req: Any) -> None:
+            mock_creds.token = "tok-new"
+            mock_creds.expiry = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=1)
+
+        mock_creds.refresh.side_effect = refresh_side_effect
+
+        with (
+            patch("google.oauth2.credentials.Credentials", return_value=mock_creds),
+            patch("google.auth.transport.requests.Request"),
+        ):
+            oauth = self._make_oauth(gmail_account)
+            # First call: cache isn't populated yet. Creds get constructed,
+            # and _needs_refresh returns True (within buffer) → refresh runs.
+            assert oauth.get_access_token() == "tok-new"
+
+        # Force near-expiry again to exercise cached-creds-need-refresh path.
+        mock_creds.expiry = datetime.now(UTC).replace(tzinfo=None) + timedelta(seconds=10)
+        mock_creds.token = "tok-old"
+
+        with (
+            patch("google.oauth2.credentials.Credentials", return_value=mock_creds),
+            patch("google.auth.transport.requests.Request"),
+        ):
+            assert oauth.get_access_token() == "tok-new"
+
+        # Two refreshes total: one per near-expiry call.
+        assert mock_creds.refresh.call_count == 2
+
+    def test_refresh_when_refresh_token_changes(
+        self, gmail_account: ImapAccountConfig
+    ) -> None:
+        """If the user re-authorizes (new refresh token in keyring), the
+        cached Credentials object must be rebuilt — not reused with the
+        old refresh token."""
+        creds_a = self._valid_creds_mock("tok-A")
+        creds_a.refresh_token = "refresh-A"
+        creds_b = self._valid_creds_mock("tok-B")
+        creds_b.refresh_token = "refresh-B"
+
+        constructed: list[MagicMock] = [creds_a, creds_b]
+
+        def credentials_factory(*_a: Any, **_kw: Any) -> MagicMock:
+            return constructed.pop(0)
+
+        with (
+            patch("google.oauth2.credentials.Credentials", side_effect=credentials_factory),
+            patch("google.auth.transport.requests.Request"),
+        ):
+            oauth = self._make_oauth(gmail_account, refresh_token="refresh-A")
+            assert oauth.get_access_token() == "tok-A"
+
+            # User re-authorizes — new refresh token in keyring.
+            oauth._auth_manager.get_password.return_value = "refresh-B"
+            assert oauth.get_access_token() == "tok-B"
 
 
 # =============================================================================
