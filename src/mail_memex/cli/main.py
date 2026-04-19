@@ -396,6 +396,14 @@ def _run_import_with_importer(importer, db: Database, json_output: bool = False)
                 email.cc_addrs = ",".join(parsed.cc_addrs) if parsed.cc_addrs else None
                 email.bcc_addrs = ",".join(parsed.bcc_addrs) if parsed.bcc_addrs else None
 
+                # Normalized recipients for indexed to:/cc:/bcc: queries.
+                # CSV columns above remain for display.
+                from mail_memex.core.recipients import build_recipients
+
+                email.recipients.extend(build_recipients(parsed.to_addrs, parsed.to_names, "to"))
+                email.recipients.extend(build_recipients(parsed.cc_addrs, parsed.cc_names, "cc"))
+                email.recipients.extend(build_recipients(parsed.bcc_addrs, None, "bcc"))
+
                 # Preserve all headers (Gmail labels, List-Id, etc.) as JSON.
                 # Queryable via json_extract(metadata_json, '$.X-Gmail-Labels').
                 if parsed.raw_headers:
@@ -557,6 +565,30 @@ def rebuild_threads(
         console.print(f"[green]Built {thread_count} conversation threads[/green]")
     else:
         console.print("[yellow]No new threads to build[/yellow]")
+
+
+@rebuild_app.command("recipients")
+def rebuild_recipients(
+    json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
+) -> None:
+    """Backfill the email_recipients side table from to/cc/bcc CSV columns.
+
+    Run once after upgrading to a schema that includes email_recipients.
+    Idempotent: emails that already have recipient rows are skipped.
+    """
+    from mail_memex.core.recipients import backfill_recipients
+
+    db = get_db()
+    with db.session() as session:
+        created = backfill_recipients(session)
+        session.commit()
+
+    if json:
+        print(json_lib.dumps({"recipients_created": created}, indent=2))
+    elif created:
+        console.print(f"[green]Created {created} recipient rows[/green]")
+    else:
+        console.print("[yellow]All emails already have recipient rows[/yellow]")
 
 
 # === Tag Commands ===

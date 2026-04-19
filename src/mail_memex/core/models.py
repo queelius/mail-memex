@@ -92,6 +92,9 @@ class Email(Base):
     attachments: Mapped[list[Attachment]] = relationship(
         back_populates="email", cascade="all, delete-orphan"
     )
+    recipients: Mapped[list[EmailRecipient]] = relationship(
+        back_populates="email", cascade="all, delete-orphan"
+    )
     tags: Mapped[list[Tag]] = relationship(secondary=email_tags, back_populates="emails")
 
     __table_args__ = (Index("ix_emails_date_thread", "date", "thread_id"),)
@@ -168,6 +171,40 @@ class Attachment(Base):
 
     def __repr__(self) -> str:
         return f"<Attachment {self.filename} ({self.content_type})>"
+
+
+class EmailRecipient(Base):
+    """Normalized recipient (to/cc/bcc) — one row per address per email.
+
+    emails.to_addrs/cc_addrs/bcc_addrs are CSV strings kept for display
+    compatibility. Searching those for 'to:alice' requires LIKE '%alice%'
+    on the whole CSV — non-sargable, so every row is scanned.
+
+    This side table stores one (addr, name, kind) row per recipient with
+    an index on addr (and a composite index on addr+kind for kind-scoped
+    queries). The SearchEngine JOINs against this table so to:/from:-style
+    queries use the index.
+
+    Populated by importers and IMAP pull at ingestion time. A backfill
+    function exists for migrating existing databases.
+    """
+
+    __tablename__ = "email_recipients"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email_id: Mapped[int] = mapped_column(
+        ForeignKey("emails.id", ondelete="CASCADE"), index=True
+    )
+    addr: Mapped[str] = mapped_column(String(320), index=True)
+    name: Mapped[str | None] = mapped_column(String(255))
+    kind: Mapped[str] = mapped_column(String(3))  # "to" | "cc" | "bcc"
+
+    email: Mapped[Email] = relationship(back_populates="recipients")
+
+    __table_args__ = (Index("ix_email_recipients_kind_addr", "kind", "addr"),)
+
+    def __repr__(self) -> str:
+        return f"<EmailRecipient {self.kind}:{self.addr} email_id={self.email_id}>"
 
 
 class ImapSyncState(Base):

@@ -110,7 +110,7 @@ Set `MAIL_MEMEX_DATABASE_PATH` env var to override the database location.
 
 ### CLI (`src/mail_memex/cli/`)
 - `main.py` - Typer app with commands: search, init, mcp
-- Sub-apps: `import` (mbox, eml, gmail), `export` (json, mbox, markdown, html, arkiv), `tag` (add, remove, list, batch), `rebuild` (index, threads)
+- Sub-apps: `import` (mbox, eml, gmail), `export` (json, mbox, markdown, html, arkiv), `tag` (add, remove, list, batch), `rebuild` (index, threads, recipients)
 - `imap_cli.py` - IMAP sub-commands (accounts, sync, folders, test)
 
 ## Key Patterns
@@ -147,7 +147,9 @@ Positions within a record use URI fragments (not separate kinds):
 All CLI commands support `--json` flag for programmatic use. Output is valid JSON to stdout.
 
 ### Address Storage
-`to_addrs`, `cc_addrs`, and `bcc_addrs` are stored as comma-separated strings in a single Text column. To search for a specific recipient, use `LIKE '%address@example.com%'` or parse in the application layer.
+`to_addrs`, `cc_addrs`, and `bcc_addrs` on `emails` are comma-separated strings in a single Text column, kept for display compatibility.
+
+For searches like `to:alice`, the search engine JOINs against the `email_recipients` side table: one row per `(email_id, addr, name, kind)` with an index on `addr` and a composite index on `(kind, addr)`. Ingestion (file importers and IMAP pull) populates this table at the same time as the CSV columns. For databases imported before this schema, run `mail-memex rebuild recipients` once to backfill from the CSV columns. The command is idempotent.
 
 ## Testing
 

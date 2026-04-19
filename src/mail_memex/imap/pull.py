@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import func, select
 
 from mail_memex.core.models import Email, ImapSyncState, Tag
+from mail_memex.core.recipients import parse_header
 from mail_memex.importers.parser import clean_message_id
 
 
@@ -185,8 +186,11 @@ class PullSync:
         if not message_id:
             message_id = f"imap-{self.account.name}-{folder}-{uid}"
 
+        to_header = msg.get("To", "")
+        cc_header = msg.get("Cc", "")
+        bcc_header = msg.get("Bcc", "")
         to_addrs, cc_addrs, bcc_addrs = (
-            self._join_addrs(msg.get(h, "")) for h in ("To", "Cc", "Bcc")
+            self._join_addrs(h) for h in (to_header, cc_header, bcc_header)
         )
 
         existing = self.session.execute(
@@ -200,6 +204,11 @@ class PullSync:
             existing.to_addrs = to_addrs
             existing.cc_addrs = cc_addrs
             existing.bcc_addrs = bcc_addrs
+            # Keep normalized recipients in sync with the refreshed CSVs.
+            existing.recipients.clear()
+            existing.recipients.extend(parse_header(to_header, "to"))
+            existing.recipients.extend(parse_header(cc_header, "cc"))
+            existing.recipients.extend(parse_header(bcc_header, "bcc"))
             target = existing
             result.updated_tags += 1
         else:
@@ -237,6 +246,9 @@ class PullSync:
                 cc_addrs=cc_addrs,
                 bcc_addrs=bcc_addrs,
             )
+            target.recipients.extend(parse_header(to_header, "to"))
+            target.recipients.extend(parse_header(cc_header, "cc"))
+            target.recipients.extend(parse_header(bcc_header, "bcc"))
             self.session.add(target)
             self.session.flush()
             result.new_emails += 1

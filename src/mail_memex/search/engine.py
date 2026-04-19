@@ -16,7 +16,7 @@ from typing import Literal
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
-from mail_memex.core.models import Email, Tag, email_tags
+from mail_memex.core.models import Email, EmailRecipient, Tag, email_tags
 
 
 @dataclass
@@ -221,7 +221,14 @@ class SearchEngine:
         if query.from_addr:
             conditions.append(Email.from_addr.ilike(f"%{query.from_addr}%"))
         if query.to_addr:
-            conditions.append(Email.to_addrs.ilike(f"%{query.to_addr}%"))
+            # Use the normalized recipients table (indexed on addr) instead
+            # of LIKE-scanning the CSV to_addrs column. Matches to/cc/bcc
+            # per Gmail semantics — the `to:` operator finds a recipient
+            # in any delivery field.
+            recipient_subq = select(EmailRecipient.email_id).where(
+                EmailRecipient.addr.ilike(f"%{query.to_addr}%")
+            )
+            conditions.append(Email.id.in_(recipient_subq))
         if query.subject:
             conditions.append(Email.subject.ilike(f"%{query.subject}%"))
         if query.date_from:

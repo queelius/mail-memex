@@ -415,6 +415,13 @@ def populated_db(db: Database) -> Database:
         )
         session.add(attachment)
 
+        # Backfill normalized recipients from CSV to_addrs so `to:` search
+        # works. Production code populates recipients at import time; this
+        # fixture builds Email rows directly and needs the migration path.
+        from mail_memex.core.recipients import backfill_recipients
+
+        session.commit()
+        backfill_recipients(session)
         session.commit()
 
     return db
