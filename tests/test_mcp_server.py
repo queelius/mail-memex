@@ -199,6 +199,35 @@ class TestExecuteSQL:
             )
             assert "error" in result
 
+    def test_writable_schema_pragma_blocked(self, mcp_db: Database) -> None:
+        """PRAGMA writable_schema is a full schema-escape hatch — it lets
+        you UPDATE sqlite_master and rewrite any table's definition,
+        bypassing triggers, constraints, and column scope. Must be denied
+        even though plain DDL is already blocked separately."""
+        from mail_memex.mcp.server import execute_sql_impl
+
+        with mcp_db.session() as session:
+            for stmt in (
+                "PRAGMA writable_schema = 1",
+                "PRAGMA writable_schema = ON",
+                "PRAGMA WRITABLE_SCHEMA = 1",  # case insensitive
+                "PRAGMA writable_schema",  # read also blocked for safety
+            ):
+                result = json.loads(execute_sql_impl(session, stmt, readonly=False))
+                assert "error" in result, f"Not blocked: {stmt}"
+
+    def test_safe_pragmas_still_work(self, mcp_db: Database) -> None:
+        """Read-only introspection PRAGMAs must still function — they're
+        how LLMs explore the schema via MCP."""
+        from mail_memex.mcp.server import execute_sql_impl
+
+        with mcp_db.session() as session:
+            result = json.loads(execute_sql_impl(session, "PRAGMA foreign_keys"))
+            assert isinstance(result, list)
+            # table_info already covered elsewhere; spot-check another one
+            result = json.loads(execute_sql_impl(session, "PRAGMA database_list"))
+            assert isinstance(result, list)
+
 
 # =============================================================================
 # TestGetSchema

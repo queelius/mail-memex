@@ -97,6 +97,12 @@ _DDL_ACTIONS = _codes(
 
 _WRITE_ACTIONS = _codes("SQLITE_INSERT", "SQLITE_UPDATE", "SQLITE_DELETE")
 
+# PRAGMAs that are always blocked — writable_schema allows editing
+# sqlite_master and bypassing every higher-level safety check (triggers,
+# constraints, schema); journal_mode switching can corrupt an in-use
+# WAL database if another connection holds locks.
+_BLOCKED_PRAGMAS = frozenset({"writable_schema", "journal_mode"})
+
 
 class _AuthContext:
     """Per-call authorizer state: remembers why the last statement was denied."""
@@ -113,6 +119,16 @@ class _AuthContext:
                 "DDL statements (DROP/ALTER/CREATE/ATTACH/DETACH/REINDEX) "
                 "are not allowed"
             )
+            return sqlite3.SQLITE_DENY
+        if (
+            action == sqlite3.SQLITE_PRAGMA
+            and isinstance(arg1, str)
+            and arg1.lower() in _BLOCKED_PRAGMAS
+        ):
+            # arg1 is the pragma name (e.g. 'writable_schema'); arg2 is its
+            # value when setting (None when reading). Block both read and
+            # write for names on the danger list.
+            self.reason = f"PRAGMA {arg1} is blocked — bypasses schema safety."
             return sqlite3.SQLITE_DENY
         if self.readonly and action in _WRITE_ACTIONS:
             self.reason = (

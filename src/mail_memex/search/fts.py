@@ -272,30 +272,38 @@ def fts5_search(
     ]
 
 
-def rebuild_fts_index(engine: Engine) -> int:
+def rebuild_fts_index(engine: Engine, *, _retry: bool = True) -> int:
     """Rebuild the FTS5 index from scratch.
 
     Drops and recreates all FTS data. Use after bulk operations
     or if the index becomes corrupted.
 
+    If the emails_fts table doesn't exist (first-run corner case), try
+    setup_fts5() once and retry. If setup also fails, raise — the old
+    code recursed unconditionally and could infinite-loop when FTS5
+    wasn't available at all.
+
     Args:
         engine: SQLAlchemy engine.
+        _retry: Internal guard. False on the recursive call so failure
+            after a setup attempt raises instead of looping.
 
     Returns:
         Number of emails indexed.
     """
     with engine.connect() as conn:
-        # Clear existing FTS data
         try:
             conn.execute(text("DELETE FROM emails_fts"))
-        except Exception:
-            # Table might not exist yet
+        except Exception as e:
+            if not _retry:
+                raise RuntimeError(
+                    "rebuild_fts_index: emails_fts is missing and setup_fts5 "
+                    "did not restore it — FTS5 may be unavailable."
+                ) from e
             setup_fts5(engine)
-            return rebuild_fts_index(engine)
+            return rebuild_fts_index(engine, _retry=False)
 
-        # Re-populate from emails table
         conn.execute(text(_FTS_BACKFILL_SELECT))
-
         count = conn.execute(text("SELECT COUNT(*) FROM emails_fts")).scalar() or 0
         conn.commit()
 

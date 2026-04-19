@@ -398,6 +398,32 @@ class TestFts5TriggerSync:
                 "Archived rows leaked into LIMIT-5 FTS result pool"
             )
 
+    def test_rebuild_fts_index_raises_after_retry_fails(
+        self, fts_db: Database, monkeypatch
+    ) -> None:
+        """Regression: old code recursed on setup_fts5 failure indefinitely.
+        With the _retry guard, a persistent failure raises RuntimeError
+        instead of looping forever."""
+        import mail_memex.search.fts as fts_module
+        from mail_memex.search.fts import rebuild_fts_index
+
+        # Drop the FTS table so the DELETE fails on the first attempt.
+        with fts_db.session() as session:
+            session.execute(text("DROP TABLE emails_fts"))
+            session.execute(text("DROP TRIGGER IF EXISTS emails_fts_insert"))
+            session.execute(text("DROP TRIGGER IF EXISTS emails_fts_update"))
+            session.execute(text("DROP TRIGGER IF EXISTS emails_fts_delete"))
+            session.commit()
+
+        # Force setup_fts5 to return False (simulates FTS5 unavailable
+        # or a broken install where setup can't restore the table).
+        monkeypatch.setattr(fts_module, "setup_fts5", lambda _engine: False)
+
+        import pytest as _pytest
+
+        with _pytest.raises(RuntimeError, match="FTS5 may be unavailable"):
+            rebuild_fts_index(fts_db.engine)
+
     def test_setup_migrates_old_unscoped_trigger(self, fts_db: Database) -> None:
         """Databases that already have the old (unscoped) UPDATE trigger must
         have it replaced by the new (column-scoped) version when setup_fts5

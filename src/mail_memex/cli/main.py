@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json as json_lib
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
@@ -380,7 +380,9 @@ def _run_import_with_importer(importer, db: Database, json_output: bool = False)
                     from_addr=parsed.from_addr,
                     from_name=parsed.from_name,
                     subject=parsed.subject,
-                    date=parsed.date or datetime.now(),
+                    # Column is naive UTC per existing data; fall back to
+                    # same shape rather than mixing naive/aware within a column.
+                    date=parsed.date or datetime.now(UTC).replace(tzinfo=None),
                     in_reply_to=parsed.in_reply_to,
                     references=" ".join(parsed.references) if parsed.references else None,
                     body_text=parsed.body_text,
