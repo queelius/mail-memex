@@ -29,11 +29,20 @@ console = Console()
 
 
 def get_db() -> Database:
-    """Get the database, loading config as needed."""
+    """Get the database, loading config as needed.
+
+    Runs create_tables() on every call so any schema additions (e.g. a
+    new side table added in a later release) are applied transparently
+    before the command runs. SQLAlchemy's create_all() checks for
+    existing tables first, so this is a cheap no-op on already-migrated
+    databases.
+    """
     config = MailMemexConfig.load()
     if not config.db_path:
         config.db_path = config.default_data_dir() / "mail-memex.db"
-    return Database(config.db_path)
+    db = Database(config.db_path)
+    db.create_tables()
+    return db
 
 
 def format_date(dt: datetime | None) -> str:
