@@ -305,7 +305,7 @@ class TestGetSchema:
 
 class TestGetRecord:
     """Tests for get_record_impl — now takes a mail-memex:// URI per the
-    federation contract (see meta-memex/docs/uri-scheme.md)."""
+    federation contract (see memex/docs/uri-scheme.md)."""
 
     def test_email_by_uri(self, mcp_db: Database) -> None:
         from mail_memex.mcp.server import get_record_impl

@@ -79,7 +79,7 @@ Replace `mcp.server.Server` with `FastMCP("mail-memex")` to match btk, ptk, ebk.
 
 ### Contract Tools
 
-Three tools required by the meta-memex architecture contract:
+Three tools required by the memex architecture contract:
 
 **`execute_sql(sql: str, readonly: bool = True) -> str`**
 - Replaces the old `run_sql`. Same behavior: DDL always blocked, writes blocked when `readonly=True`.

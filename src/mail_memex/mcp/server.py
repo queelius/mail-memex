@@ -227,7 +227,7 @@ def _parse_uri(uri: str) -> tuple[str, str]:
 
     Fragments are stripped — they address positions within a record
     (e.g. '#part=2', '#msg-45-67') and are opaque to the resolution
-    layer per the *-memex URI scheme (see meta-memex/docs/uri-scheme.md).
+    layer per the *-memex URI scheme (see memex/docs/uri-scheme.md).
 
     Raises ValueError for malformed input or a non-mail-memex scheme.
     """

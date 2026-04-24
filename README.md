@@ -158,7 +158,7 @@ mail-memex://thread/<thread_id>
 mail-memex://marginalia/<uuid>
 ```
 
-A trail in `meta-memex` (or a note anywhere else) can reference these as plain strings. The archive resolves them via `get_record`.
+A trail in `memex` (or a note anywhere else) can reference these as plain strings. The archive resolves them via `get_record`.
 
 ### Database ID Scheme
 
@@ -206,7 +206,7 @@ Core tables (all carry `archived_at TIMESTAMP NULL` where applicable):
 
 - **Contract compliance.** Satisfies the `*-memex` archive contract: SQLite+FTS5, MCP server with `execute_sql`/`get_schema`/`get_record`, arkiv export, soft delete, marginalia, durable URIs.
 - **Thin admin CLI.** Use the CLI for import, export, and housekeeping. Use the MCP server for interactive query. Marginalia is MCP-only.
-- **No embeddings here.** Archives stay narrow. The federation layer (`meta-memex`, soon to be renamed to `memex`) computes embeddings and maintains cross-archive trails.
+- **No embeddings here.** Archives stay narrow. The federation layer (`memex`, soon to be renamed to `memex`) computes embeddings and maintains cross-archive trails.
 - **Re-importable.** Dedup by Message-ID, so running the same import twice is a no-op.
 
 ## Status

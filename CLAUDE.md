@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 mail-memex is a personal email archive with full-text search and SQL/MCP access. It stores email from mbox files, eml files, and IMAP accounts into a SQLite database with FTS5 indexing. LLM interaction happens via an MCP server built on FastMCP, exposing contract tools (execute_sql, get_schema, get_record) and domain tools (search_emails, marginalia CRUD).
 
-Part of the *-memex personal archive ecosystem alongside llm-memex (AI conversations), bookmark-memex (bookmarks), photo-memex (photos), book-memex (ebooks), and hugo-memex (static site content). The federation layer is meta-memex (design phase).
+Part of the *-memex personal archive ecosystem alongside llm-memex (AI conversations), bookmark-memex (bookmarks), photo-memex (photos), book-memex (ebooks), and hugo-memex (static site content). The federation layer is `memex/` (design phase).
 
 ## Development Commands
 
