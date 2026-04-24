@@ -173,10 +173,13 @@ class EmailParser:
         # Parse From header
         from_addr, from_name = self._parse_address(msg.get("From", ""))
 
-        # Parse To/CC/BCC
+        # Parse To/CC/BCC. We parse but don't surface bcc display names:
+        # BCC recipients are hidden by design, and ParsedEmail exposes
+        # bcc_addrs only (enough for recipient-index lookups; no display
+        # name consumer downstream).
         to_addrs, to_names = self._parse_address_list(msg.get("To", ""))
         cc_addrs, cc_names = self._parse_address_list(msg.get("Cc", ""))
-        bcc_addrs, bcc_names = self._parse_address_list(msg.get("Bcc", ""))
+        bcc_addrs, _ = self._parse_address_list(msg.get("Bcc", ""))
 
         # Parse date
         date = self._parse_date(msg.get("Date"))
