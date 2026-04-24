@@ -194,6 +194,53 @@ def import_gmail(
     _run_import_with_importer(importer, db, json_output=json)
 
 
+@import_app.command("arkiv")
+def import_arkiv_cmd(
+    path: Path = typer.Argument(
+        ...,
+        help=(
+            "Path to an arkiv bundle (directory, .zip, .tar.gz, .tgz, "
+            ".jsonl, or .jsonl.gz)."
+        ),
+    ),
+    merge: bool = typer.Option(
+        False,
+        "--merge",
+        help=(
+            "Merge into existing records without clobbering local state. "
+            "Reserved for CLI parity with the ecosystem; the default "
+            "insert path is already duplicate-safe."
+        ),
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON"
+    ),
+) -> None:
+    """Import emails and marginalia from an arkiv bundle."""
+    from mail_memex.importers import detect_arkiv, import_arkiv
+
+    db = get_db()
+    if not detect_arkiv(path):
+        raise typer.BadParameter(
+            f"{path!s} does not look like a mail-memex arkiv bundle"
+        )
+
+    stats = import_arkiv(db, path, merge=merge)
+
+    if json_output:
+        print(json_lib.dumps(stats, indent=2))
+    else:
+        console.print(
+            f"[green]Imported {stats['emails_added']} emails "
+            f"({stats['emails_skipped_existing']} skipped duplicates)[/green]"
+        )
+        if stats["marginalia_seen"]:
+            console.print(
+                f"[green]Imported {stats['marginalia_added']} marginalia "
+                f"({stats['marginalia_skipped_existing']} skipped duplicates)[/green]"
+            )
+
+
 def _resolve_thread_root(email, session) -> str | None:
     """Walk In-Reply-To and References from an email up to its earliest
     ancestor that exists in the archive.
