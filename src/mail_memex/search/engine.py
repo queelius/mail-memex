@@ -303,9 +303,15 @@ class SearchEngine:
             if not fts_data:
                 continue
 
-            # Convert BM25 rank (negative, lower=better) to a 0-1 score
+            # Convert BM25 rank to a (0,1) score that INCREASES with match
+            # quality. FTS5 bm25() is <= 0 with more-negative = better. The
+            # previous 1/(1-raw) DECREASED with quality (a -6.4 great match
+            # scored 0.14, a -3.7 worse match 0.21), so the reverse-sort
+            # below ranked worst-first and the limit slice then dropped the
+            # true top hits. 1 - 1/(1-raw) is monotonic increasing in
+            # quality and stays in (0,1) for matched rows.
             raw_rank = fts_data["rank"]
-            score = 1.0 / (1.0 - raw_rank) if raw_rank < 0 else 1.0
+            score = 1.0 - 1.0 / (1.0 - raw_rank) if raw_rank < 0 else 0.0
 
             highlights: dict[str, list[str]] = {"subject": [], "body": []}
             if fts_data.get("snippet_subject"):

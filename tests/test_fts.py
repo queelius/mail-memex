@@ -640,6 +640,33 @@ class TestSearchEngineFts5Integration:
             for r in results:
                 assert r.score > 0
 
+    def test_relevance_orders_best_match_first(self, fts_populated_db: Database) -> None:
+        """Regression (B7): the score conversion used to DECREASE with match
+        quality, so reverse-sort put the worst match first. The subject match
+        (email 1, "Project requirements", subject weight=10) must now rank
+        ahead of the body-only match, and scores must be descending."""
+        with fts_populated_db.session() as session:
+            engine = SearchEngine(session)
+            results = engine.search("project", order_by="relevance")
+            assert len(results) >= 2
+            scores = [r.score for r in results]
+            assert scores == sorted(scores, reverse=True), "results not best-first"
+            assert "requirements" in (results[0].email.subject or "").lower(), (
+                "subject match should rank first, got: "
+                + repr(results[0].email.subject)
+            )
+
+    def test_limit_returns_best_not_worst(self, fts_populated_db: Database) -> None:
+        """Regression (B7): with limit < candidate pool, the slice over the
+        inverted order used to return the WORST matches. limit=1 must return
+        the same top hit as the unlimited search."""
+        with fts_populated_db.session() as session:
+            engine = SearchEngine(session)
+            top1 = engine.search("project", limit=1, order_by="relevance")
+            allr = engine.search("project", limit=50, order_by="relevance")
+            assert len(top1) == 1
+            assert top1[0].email.id == allr[0].email.id
+
     def test_search_results_have_highlights(self, fts_populated_db: Database) -> None:
         """FTS5 search results should have highlight snippets."""
         with fts_populated_db.session() as session:

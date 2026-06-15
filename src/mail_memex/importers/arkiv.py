@@ -279,7 +279,7 @@ def import_arkiv(
     from sqlalchemy import select
 
     from mail_memex.core.marginalia import create_marginalia
-    from mail_memex.core.models import Email, Marginalia
+    from mail_memex.core.models import Email, Marginalia, Thread
     from mail_memex.importers.parser import clean_message_id
 
     stats = {
@@ -295,6 +295,7 @@ def import_arkiv(
     # this makes the semantics clean: emails first, marginalia after so
     # their target_uris can point at emails that landed this round.
     records = list(_open_jsonl(path))
+    threads_seen: set[str] = set()
 
     with db.session() as session:
         for rec in records:
@@ -324,19 +325,41 @@ def import_arkiv(
             bcc_addrs = meta.get("bcc_addrs")
 
             # Stored form is naive UTC (column is without timezone).
+            # date is NOT NULL on the model, so fall back to the epoch
+            # sentinel when the record carries no parseable timestamp
+            # (otherwise the whole import rolls back on a NOT NULL violation).
             ts = _parse_timestamp(rec.get("timestamp"))
+            email_date = ts.replace(tzinfo=None) if ts else datetime(1970, 1, 1)
+
+            # thread_id is a FK to threads.thread_id (enforced: foreign_keys=ON).
+            # The export emits no thread records, so referencing a thread_id
+            # without first creating its row raised IntegrityError and rolled
+            # back the ENTIRE import. Get-or-create a minimal Thread so the FK
+            # holds and the original threading survives the round-trip; a later
+            # `rebuild threads` refines subject/counts.
+            thread_id = meta.get("thread_id") or None
+            if thread_id and thread_id not in threads_seen:
+                exists = session.execute(
+                    select(Thread).where(Thread.thread_id == thread_id)
+                ).scalar_one_or_none()
+                if exists is None:
+                    session.add(
+                        Thread(thread_id=thread_id, subject=meta.get("subject"))
+                    )
+                    session.flush()  # satisfy the FK before the email insert
+                threads_seen.add(thread_id)
 
             email = Email(
                 message_id=message_id,
                 from_addr=meta.get("from_addr") or "",
                 from_name=meta.get("from_name"),
                 subject=meta.get("subject"),
-                date=ts.replace(tzinfo=None) if ts else None,
+                date=email_date,
                 to_addrs=to_addrs if isinstance(to_addrs, str) else None,
                 cc_addrs=cc_addrs if isinstance(cc_addrs, str) else None,
                 bcc_addrs=bcc_addrs if isinstance(bcc_addrs, str) else None,
                 in_reply_to=clean_message_id(meta.get("in_reply_to")),
-                thread_id=meta.get("thread_id"),
+                thread_id=thread_id,
                 body_text=rec.get("content"),
             )
             session.add(email)

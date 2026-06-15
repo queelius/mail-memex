@@ -30,7 +30,31 @@ def _get_account(name: str) -> ImapAccountConfig:
 
 
 def _get_password(account: ImapAccountConfig) -> str:
-    """Get password for account from keyring or prompt."""
+    """Return the credential to authenticate this account.
+
+    For OAuth2 accounts this is a freshly-minted ACCESS token, exchanged
+    from the stored refresh token via ``GmailOAuth2.get_access_token()``.
+    imapclient's ``oauth2_login`` expects an XOAUTH2 *access* token; the
+    code previously passed the stored *refresh* token straight through, so
+    Gmail rejected every OAuth2 sync/folders/test as an invalid bearer. The
+    refresh→access exchange existed and was unit-tested but was never called
+    from any production path.
+
+    For password accounts this is the stored password (or an interactive
+    prompt).
+    """
+    if account.oauth2:
+        from mail_memex.imap.auth import GmailOAuth2
+
+        token = GmailOAuth2(account).get_access_token()
+        if not token:
+            console.print(
+                f"[yellow]No valid OAuth2 token for {account.name}[/yellow]"
+            )
+            console.print("Run 'mail-memex imap auth {name} --oauth2' first.")
+            raise typer.Exit(code=1)
+        return token
+
     from mail_memex.imap.auth import AuthManager
 
     auth = AuthManager()

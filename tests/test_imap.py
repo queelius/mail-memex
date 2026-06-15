@@ -1727,3 +1727,39 @@ class TestPullSync:
             ).scalar()
             assert email.in_reply_to == "original@example.com"
             assert email.references is not None
+
+
+class TestGetPasswordOAuth2:
+    """B9 regression: for OAuth2 accounts, _get_password must exchange the
+    stored refresh token for a fresh ACCESS token. imapclient.oauth2_login
+    expects an access token; passing the refresh token straight through (the
+    old behaviour) made Gmail reject every sync. The exchange existed but was
+    never called from production."""
+
+    def test_oauth2_account_returns_access_token_not_refresh(self, gmail_account):
+        from mail_memex.cli import imap_cli
+
+        with patch("mail_memex.imap.auth.GmailOAuth2.get_access_token",
+                   return_value="ya29.ACCESS-TOKEN") as get_tok, \
+             patch("mail_memex.imap.auth.AuthManager.get_password",
+                   return_value="1//REFRESH-TOKEN"):
+            result = imap_cli._get_password(gmail_account)
+        assert result == "ya29.ACCESS-TOKEN"
+        assert result != "1//REFRESH-TOKEN"
+        get_tok.assert_called_once()
+
+    def test_oauth2_account_with_no_token_exits(self, gmail_account):
+        import typer
+        from mail_memex.cli import imap_cli
+
+        with patch("mail_memex.imap.auth.GmailOAuth2.get_access_token",
+                   return_value=None):
+            with pytest.raises(typer.Exit):
+                imap_cli._get_password(gmail_account)
+
+    def test_password_account_returns_stored_password(self, imap_account):
+        from mail_memex.cli import imap_cli
+
+        with patch("mail_memex.imap.auth.AuthManager.get_password",
+                   return_value="hunter2"):
+            assert imap_cli._get_password(imap_account) == "hunter2"

@@ -331,3 +331,79 @@ class TestImportRoundTrip:
             assert e2.from_addr == "bob@example.com"
             assert e2.subject == "reply to hello"
             assert e2.body_text == "reply body"
+
+
+# ---------------------------------------------------------------------------
+# B8 regression: threaded export round-trip + missing-date fallback
+# ---------------------------------------------------------------------------
+
+
+class TestThreadedRoundTripRegression:
+    def test_import_threaded_export_does_not_crash(self, tmp_path):
+        """A threaded export (emails carrying thread_id) must import without a
+        FOREIGN KEY violation. thread_id FKs threads.thread_id with
+        foreign_keys=ON, but the export emits no thread records, so the
+        importer previously inserted a dangling thread_id and the whole
+        import rolled back. We now get-or-create the Thread row."""
+        from mail_memex.core.models import Thread
+
+        src = Database(tmp_path / "src.db")
+        src.create_tables()
+        with src.session() as session:
+            session.add(Thread(thread_id="thr-root@test", subject="hello"))
+            session.flush()
+            session.add(
+                Email(
+                    message_id="m1@test",
+                    from_addr="alice@example.com",
+                    subject="hello",
+                    body_text="body one",
+                    date=datetime.now(UTC).replace(tzinfo=None),
+                    thread_id="thr-root@test",
+                )
+            )
+            session.commit()
+
+        out = tmp_path / "bundle"
+        with src.session() as session:
+            emails = session.execute(select(Email)).scalars().all()
+            ArkivExporter(out).export(emails, session=session)
+
+        fresh = Database(tmp_path / "fresh.db")
+        fresh.create_tables()
+        stats = import_arkiv(fresh, out)  # would raise IntegrityError before the fix
+
+        assert stats["emails_added"] == 1
+        with fresh.session() as session:
+            email = session.execute(
+                select(Email).where(Email.message_id == "m1@test")
+            ).scalar_one()
+            assert email.thread_id == "thr-root@test"
+            # The referenced Thread row was created (FK satisfied).
+            thread = session.execute(
+                select(Thread).where(Thread.thread_id == "thr-root@test")
+            ).scalar_one()
+            assert thread.thread_id == "thr-root@test"
+
+    def test_import_record_without_timestamp_uses_epoch(self, tmp_path):
+        """date is NOT NULL; a record with no parseable timestamp must still
+        import (epoch sentinel) rather than rolling back the whole bundle."""
+        fresh = Database(tmp_path / "fresh.db")
+        fresh.create_tables()
+
+        bundle = tmp_path / "records.jsonl"
+        rec = {
+            "kind": "email",
+            "content": "no timestamp here",
+            "metadata": {"message_id": "nodate@test", "from_addr": "x@y.com",
+                         "subject": "undated"},
+        }
+        bundle.write_text(json.dumps(rec) + "\n")
+
+        stats = import_arkiv(fresh, bundle)
+        assert stats["emails_added"] == 1
+        with fresh.session() as session:
+            email = session.execute(
+                select(Email).where(Email.message_id == "nodate@test")
+            ).scalar_one()
+            assert email.date == datetime(1970, 1, 1)
