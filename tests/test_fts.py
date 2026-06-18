@@ -508,6 +508,25 @@ class TestPrepareQuery:
         result = prepare_fts_query("cat OR dog")
         assert "OR" in result
 
+    def test_special_char_token_is_quoted(self) -> None:
+        """MM-11: a token with non-bareword chars (e.g. an email address)
+        must be double-quoted, not turned into 'alice@example.com*' which is
+        an FTS5 syntax error near '@'."""
+        assert prepare_fts_query("alice@example.com") == '"alice@example.com"'
+
+    def test_negation_anywhere_excludes(self) -> None:
+        """MM-11: negation works regardless of token order and yields valid
+        binary NOT (the old '-spam hello' produced a leading 'NOT', invalid)."""
+        result = prepare_fts_query("-spam hello")
+        assert "hello*" in result
+        assert "NOT spam" in result
+        assert not result.lstrip().startswith("NOT")
+
+    def test_pure_negation_returns_empty(self) -> None:
+        """MM-11: a purely negative query can't be expressed in FTS5; return
+        empty rather than invalid SQL."""
+        assert prepare_fts_query("-spam") == ""
+
 
 # =============================================================================
 # FTS5 search tests

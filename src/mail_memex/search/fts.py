@@ -174,30 +174,63 @@ def prepare_fts_query(query_text: str) -> str:
     # Remove quoted parts from remaining
     remaining = re.sub(r'"[^"]*"', " __QUOTED__ ", remaining)
 
+    def _bareword(tok: str) -> bool:
+        return bool(re.fullmatch(r"[A-Za-z0-9_]+", tok))
+
+    def _pos_atom(tok: str) -> str:
+        # Barewords get prefix matching; anything with special characters
+        # (@, ., -, etc.) is double-quoted so it can't break the FTS5 parser
+        # (e.g. 'alice@example.com' must not become 'alice@example.com*',
+        # which is a syntax error near '@').
+        if "*" in tok and _bareword(tok.rstrip("*")):
+            return tok  # already a valid prefix token
+        if _bareword(tok):
+            return f"{tok}*"
+        return '"' + tok.replace('"', '""') + '"'
+
+    def _neg_atom(tok: str) -> str:
+        if _bareword(tok):
+            return tok
+        return '"' + tok.replace('"', '""') + '"'
+
     tokens = remaining.split()
-    result_tokens = []
+    # Collect positive terms (with any explicit operators inline) and
+    # negated terms separately. FTS5 'NOT' is binary, so a query like
+    # '-spam hello' must become 'hello* NOT spam' regardless of token order;
+    # building the positive set first and appending 'NOT <term>' for each
+    # negation handles any ordering and never emits a leading NOT.
+    positives: list[str] = []
+    negatives: list[str] = []
     quoted_idx = 0
 
     for token in tokens:
         if token == "__QUOTED__":
             if quoted_idx < len(parts):
-                result_tokens.append(parts[quoted_idx][1])
+                positives.append(parts[quoted_idx][1])
                 quoted_idx += 1
         elif token.upper() in fts_operators:
-            result_tokens.append(token.upper())
-        elif token.startswith("-"):
-            # Negation: -word -> NOT word
-            word = token[1:]
-            if word:
-                result_tokens.append(f"NOT {word}")
-        elif "*" in token:
-            # Already has wildcard
-            result_tokens.append(token)
+            positives.append(token.upper())
+        elif token.startswith("-") and len(token) > 1:
+            negatives.append(_neg_atom(token[1:]))
         else:
-            # Add prefix matching for regular words
-            result_tokens.append(f"{token}*")
+            positives.append(_pos_atom(token))
 
-    return " ".join(result_tokens)
+    # Drop dangling leading/trailing operators so the positive expression is
+    # well-formed before we append negations.
+    while positives and positives[0] in fts_operators:
+        positives.pop(0)
+    while positives and positives[-1] in fts_operators:
+        positives.pop()
+
+    if not positives:
+        # A purely negative (or empty) query has no positive set to subtract
+        # from; FTS5 can't express it, so return empty rather than invalid SQL.
+        return ""
+
+    result = " ".join(positives)
+    for neg in negatives:
+        result += f" NOT {neg}"
+    return result
 
 
 def fts5_search(

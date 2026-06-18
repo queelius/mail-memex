@@ -74,7 +74,7 @@ Supported query operators: `from:`, `to:`, `subject:`, `after:`, `before:`, `tag
 ### Export (`src/mail_memex/export/`)
 - `base.py` - Exporter (ABC), ExportResult, and `_email_to_dict` helper
 - `json_export.py`, `mbox_export.py`, `markdown_export.py` - Format-specific exporters
-- `html_export.py` - HtmlExporter: generates a self-contained HTML Single File Application with the SQLite database embedded (sql.js loaded from CDN). No server required; open in any browser.
+- `html_export.py` - HtmlExporter: generates a self-contained HTML Single File Application with the SQLite database embedded and sql.js vendored inline (`export/vendored/sql-wasm.{js,wasm}`, no CDN, per the C6a contract). FTS5 tables are stripped from the embedded DB (sql.js has no FTS5). No server required; open in any browser. Deep links route on the durable `message_id`, not the internal row id.
 - `arkiv_export.py` - ArkivExporter: exports to arkiv JSONL format with schema.yaml generation
 
 ### MCP Server (`src/mail_memex/mcp/`)
@@ -87,13 +87,12 @@ MCP tools:
 - `get_schema()` - Returns full database schema as JSON with table descriptions, column info, and query tips.
 - `get_record(uri)` - Resolve a `mail-memex://` URI and return the record as JSON.
 - `search_emails(query, limit=20)` - Search emails using Gmail-like query operators. Returns ranked results.
-- `marginalia_create(target_uris, content, kind)` - Attach a note to one or more record URIs.
-- `marginalia_list(target_uri)` - List all live marginalia for a URI.
-- `marginalia_get(uuid)` - Get a single marginalia record by UUID.
-- `marginalia_update(uuid, content)` - Update marginalia content.
-- `marginalia_delete(uuid)` - Soft-delete marginalia (sets archived_at).
-- `marginalia_restore(uuid)` - Restore soft-deleted marginalia.
-- `marginalia_purge(uuid)` - Hard-delete marginalia (irreversible).
+- `create_marginalia(target_uris, content, kind)` - Attach a note to one or more record URIs.
+- `list_marginalia(target_uri)` - List all live marginalia for a URI.
+- `get_marginalia(uuid)` - Get a single marginalia record by UUID.
+- `update_marginalia(uuid, content)` - Update marginalia content.
+- `delete_marginalia(uuid)` - Soft-delete marginalia (sets archived_at); pass hard=true to purge.
+- `restore_marginalia(uuid)` - Restore soft-deleted marginalia.
 
 Configure in `.mcp.json`:
 ```json
@@ -125,7 +124,7 @@ with db.session() as session:
 ```
 
 ### Soft Delete
-Every record table (emails, threads, marginalia) carries `archived_at TIMESTAMP NULL`. Live records have `archived_at IS NULL`. Default queries filter on this. Soft delete sets `archived_at` to the current UTC timestamp. Hard delete is opt-in via an explicit flag or `marginalia_purge`.
+Every record table (emails, threads, marginalia) carries `archived_at TIMESTAMP NULL`. Live records have `archived_at IS NULL`. Default queries filter on this. Soft delete sets `archived_at` to the current UTC timestamp. Hard delete is opt-in via an explicit flag (e.g. `delete_marginalia(uuid, hard=true)`).
 
 This preserves URIs referenced by marginalia and cross-archive trails until the user explicitly purges.
 

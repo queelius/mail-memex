@@ -137,6 +137,22 @@ class TestHtmlExporter:
         assert "#/tag/" in html
         assert "hashchange" in html
 
+    def test_email_deep_links_route_on_message_id(
+        self, populated_db: Database, tmp_dir: Path
+    ) -> None:
+        """MM-9: deep links must key on the durable message_id, not the
+        internal autoincrement row id (which changes across re-imports)."""
+        output = tmp_dir / "archive.html"
+        with populated_db.session() as session:
+            emails = list(session.execute(select(Email)).scalars())
+            HtmlExporter(output).export(emails)
+        html = output.read_text()
+        # The email detail loader resolves by message_id, and rows route on it.
+        assert "WHERE message_id = ?" in html
+        assert "r.message_id" in html
+        # The old int-id parse is gone.
+        assert "parseInt(decodeURIComponent(parts[1])" not in html
+
     def test_output_is_valid_html(self, populated_db: Database, tmp_dir: Path) -> None:
         output = tmp_dir / "archive.html"
         with populated_db.session() as session:

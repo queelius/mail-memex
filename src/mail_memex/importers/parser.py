@@ -13,7 +13,7 @@ import email.utils
 import hashlib
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from email.message import EmailMessage
 from pathlib import Path
 from typing import BinaryIO
@@ -267,29 +267,41 @@ class EmailParser:
         return emails, names
 
     def _parse_date(self, date_str: str | None) -> datetime | None:
-        """Parse a date header into datetime."""
+        """Parse a date header into a naive-UTC datetime.
+
+        The ``emails.date`` column is naive-UTC; mixing tz-aware values into
+        it (SQLite serializes them with offsets) breaks lexical date
+        comparisons and the naive/aware split between ingestion paths (MM-10).
+        We normalize every parsed date here, so all three ingestion paths
+        (file, IMAP, arkiv) share one date shape.
+        """
         if not date_str:
             return None
 
+        parsed: datetime | None = None
         try:
             # email.utils.parsedate_to_datetime handles most formats
-            return email.utils.parsedate_to_datetime(date_str)
+            parsed = email.utils.parsedate_to_datetime(date_str)
         except (ValueError, TypeError):
-            pass
+            parsed = None
 
-        # Try some fallback patterns
-        fallback_patterns = [
-            "%a, %d %b %Y %H:%M:%S %z",
-            "%d %b %Y %H:%M:%S %z",
-            "%Y-%m-%d %H:%M:%S",
-        ]
-        for pattern in fallback_patterns:
-            try:
-                return datetime.strptime(date_str.strip(), pattern)
-            except ValueError:
-                continue
+        if parsed is None:
+            # Try some fallback patterns
+            fallback_patterns = [
+                "%a, %d %b %Y %H:%M:%S %z",
+                "%d %b %Y %H:%M:%S %z",
+                "%Y-%m-%d %H:%M:%S",
+            ]
+            for pattern in fallback_patterns:
+                try:
+                    parsed = datetime.strptime(date_str.strip(), pattern)
+                    break
+                except ValueError:
+                    continue
 
-        return None
+        if parsed is not None and parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
 
     def _parse_references(self, header: str) -> list[str]:
         """Parse References header into list of Message-IDs."""

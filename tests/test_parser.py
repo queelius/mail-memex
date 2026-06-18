@@ -569,3 +569,20 @@ Body with some \xff\xfe weird bytes.
         # Should not raise
         result = parser.parse_bytes(email)
         assert result.body_text is not None
+
+
+class TestDateNormalization:
+    """MM-10: parsed dates are naive-UTC so the emails.date column never
+    mixes tz-aware and naive values across ingestion paths."""
+
+    def test_offset_date_normalized_to_naive_utc(self):
+        parser = EmailParser()
+        result = parser.parse_bytes(
+            b"From: a@b\r\nMessage-ID: <x@y>\r\n"
+            b"Date: Mon, 15 Jan 2024 10:00:00 -0500\r\n\r\nbody"
+        )
+        assert result.date is not None
+        assert result.date.tzinfo is None
+        # 10:00 at -05:00 is 15:00 UTC.
+        assert result.date.hour == 15
+        assert result.date.day == 15

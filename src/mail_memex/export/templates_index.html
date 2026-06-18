@@ -184,21 +184,23 @@ td.tags { font-size: var(--font-size-sm); white-space: nowrap; }
     return rows;
   }
   function fetchRecent(db, limit) {
-    return all(db, "SELECT id, date, from_addr, from_name, subject, tags_json FROM emails ORDER BY date DESC LIMIT ?", [limit || 200]);
+    return all(db, "SELECT id, message_id, date, from_addr, from_name, subject, tags_json FROM emails ORDER BY date DESC LIMIT ?", [limit || 200]);
   }
   function fetchBySearch(db, q) {
     const like = "%" + q + "%";
-    return all(db, "SELECT id, date, from_addr, from_name, subject, tags_json FROM emails WHERE subject LIKE ? OR body_text LIKE ? OR from_addr LIKE ? OR from_name LIKE ? ORDER BY date DESC LIMIT 200", [like, like, like, like]);
+    return all(db, "SELECT id, message_id, date, from_addr, from_name, subject, tags_json FROM emails WHERE subject LIKE ? OR body_text LIKE ? OR from_addr LIKE ? OR from_name LIKE ? ORDER BY date DESC LIMIT 200", [like, like, like, like]);
   }
   function fetchByTag(db, tag) {
     const like = '%"' + tag.replace(/"/g, '""') + '"%';
-    return all(db, "SELECT id, date, from_addr, from_name, subject, tags_json FROM emails WHERE tags_json LIKE ? ORDER BY date DESC", [like]);
+    return all(db, "SELECT id, message_id, date, from_addr, from_name, subject, tags_json FROM emails WHERE tags_json LIKE ? ORDER BY date DESC", [like]);
   }
   function fetchByThread(db, threadId) {
-    return all(db, "SELECT id, date, from_addr, from_name, subject, tags_json FROM emails WHERE thread_id = ? ORDER BY date ASC", [threadId]);
+    return all(db, "SELECT id, message_id, date, from_addr, from_name, subject, tags_json FROM emails WHERE thread_id = ? ORDER BY date ASC", [threadId]);
   }
-  function fetchEmail(db, id) {
-    const rows = all(db, "SELECT * FROM emails WHERE id = ? LIMIT 1", [id]);
+  function fetchEmail(db, messageId) {
+    // Route on the durable message_id (README: the integer id is internal and
+    // changes across re-imports, so deep links keyed on it break).
+    const rows = all(db, "SELECT * FROM emails WHERE message_id = ? LIMIT 1", [messageId]);
     return rows[0] || null;
   }
   function parseTags(tagsJson) {
@@ -211,7 +213,7 @@ td.tags { font-size: var(--font-size-sm); white-space: nowrap; }
     return a;
   }
   function buildListRow(r) {
-    const tr = el("tr", { "data-id": r.id });
+    const tr = el("tr", { "data-id": r.message_id });
     const date = (r.date || "").substring(0, 16).replace("T", " ");
     const fromText = r.from_name || r.from_addr || "";
     const subject = r.subject || "(no subject)";
@@ -221,7 +223,7 @@ td.tags { font-size: var(--font-size-sm); white-space: nowrap; }
     tr.appendChild(el("td", { class: "from" }, fromText));
     tr.appendChild(el("td", { class: "subject" }, subject));
     tr.appendChild(el("td", { class: "tags" }, tagBox));
-    tr.addEventListener("click", () => { location.hash = "#/email/" + encodeURIComponent(r.id); });
+    tr.addEventListener("click", () => { location.hash = "#/email/" + encodeURIComponent(r.message_id); });
     return tr;
   }
   function buildListTable(rows) {
@@ -302,7 +304,7 @@ td.tags { font-size: var(--font-size-sm); white-space: nowrap; }
     const body = hash.slice(1).replace(/^\//, "");
     if (!body) return { name: "home" };
     const parts = body.split("/");
-    if (parts[0] === "email" && parts.length === 2) return { name: "email", id: parseInt(decodeURIComponent(parts[1]), 10) };
+    if (parts[0] === "email" && parts.length === 2) return { name: "email", id: decodeURIComponent(parts[1]) };
     if (parts[0] === "thread" && parts.length >= 2) return { name: "thread", id: decodeURIComponent(parts.slice(1).join("/")) };
     if (parts[0] === "search" && parts.length >= 2) return { name: "search", q: decodeURIComponent(parts.slice(1).join("/")) };
     if (parts[0] === "tag" && parts.length >= 2) return { name: "tag", tag: decodeURIComponent(parts.slice(1).join("/")) };
@@ -326,7 +328,7 @@ td.tags { font-size: var(--font-size-sm); white-space: nowrap; }
   }
   function highlightSelected(id) {
     document.querySelectorAll("#list-pane tbody tr").forEach(tr => {
-      tr.classList.toggle("selected", parseInt(tr.dataset.id, 10) === id);
+      tr.classList.toggle("selected", tr.dataset.id === id);
     });
   }
   function render(db) {

@@ -801,10 +801,21 @@ def tag_batch(
     from mail_memex.core.models import Tag
     from mail_memex.search import SearchEngine
 
+    # Generous cap for a personal archive; we warn loudly if it is hit
+    # rather than silently tagging only the first N matches.
+    _TAG_BATCH_LIMIT = 10000
+
     db = get_db()
     with db.session() as session:
         engine = SearchEngine(session)
-        results = engine.search(query, limit=1000)
+        results = engine.search(query, limit=_TAG_BATCH_LIMIT)
+        capped = len(results) >= _TAG_BATCH_LIMIT
+        if capped and not json:
+            console.print(
+                f"[yellow]Warning: query matched at least {_TAG_BATCH_LIMIT} "
+                f"emails (the batch cap). Only these were processed; narrow "
+                f"the query to tag the rest.[/yellow]"
+            )
 
         if not results:
             if json:
