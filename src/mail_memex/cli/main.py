@@ -288,7 +288,7 @@ def _resolve_thread_root(email, session) -> str | None:
         current = next_ancestor
 
 
-def _build_threads(session) -> int:
+def _build_threads(session, full: bool = False) -> int:
     """Build conversation threads from In-Reply-To and References headers.
 
     Three-pass algorithm:
@@ -302,6 +302,15 @@ def _build_threads(session) -> int:
     Emails without any parent reference, and replies whose ancestors are not
     in the archive, remain un-threaded (thread_id=NULL) by design.
 
+    Incremental mode (``full=False``) only considers emails that are not yet
+    threaded, which is fast but cannot repair a thread that was rooted at a
+    lower ancestor before the true root arrived (a root has no parent
+    reference, so it is never a candidate, and already-threaded children are
+    never re-examined). ``full=True`` clears every thread_id and recomputes
+    over the whole corpus, so a late-arriving root re-roots its thread, then
+    deletes threads left with no members. Use it to repair out-of-order or
+    multi-source imports (IMAP + Takeout, mbox files imported in any order).
+
     The caller's db.session() context manager commits; this function does not.
 
     Returns the number of Thread rows created (existing threads are updated
@@ -309,9 +318,15 @@ def _build_threads(session) -> int:
     """
     from collections import defaultdict
 
-    from sqlalchemy import func, or_, select
+    from sqlalchemy import func, or_, select, update
 
     from mail_memex.core.models import Email, Thread
+
+    if full:
+        # Drop all existing assignments so roots that arrived after their
+        # replies can re-root the thread on this pass.
+        session.execute(update(Email).values(thread_id=None))
+        session.flush()
 
     candidates = (
         session.execute(
@@ -388,6 +403,20 @@ def _build_threads(session) -> int:
         thread.email_count = count or 0
         thread.first_date = first_date
         thread.last_date = last_date
+
+    if full:
+        # A full recompute can leave Thread rows that no email points at any
+        # more (e.g. a thread that was provisionally rooted at B before its
+        # true root A arrived). Delete those orphans.
+        referenced = set(
+            session.execute(
+                select(Email.thread_id).where(Email.thread_id.isnot(None)).distinct()
+            ).scalars()
+        )
+        for thread in session.execute(select(Thread)).scalars().all():
+            if thread.thread_id not in referenced:
+                session.delete(thread)
+        session.flush()
 
     return threads_created
 
@@ -612,16 +641,24 @@ def rebuild_index(
 
 @rebuild_app.command("threads")
 def rebuild_threads(
+    full: bool = typer.Option(
+        False, "--full",
+        help="Clear and recompute all thread assignments over the whole "
+             "corpus (repairs threads split by out-of-order/multi-source "
+             "imports). Default is a fast incremental pass.",
+    ),
     json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
     """Rebuild conversation threads from email references.
 
     Groups emails into threads based on In-Reply-To and References headers.
     Run this after importing emails if threads weren't built automatically.
+    Use --full to repair threads that were split because a root was imported
+    after its replies.
     """
     db = get_db()
     with db.session() as session:
-        thread_count = _build_threads(session)
+        thread_count = _build_threads(session, full=full)
 
     if json:
         print(json_lib.dumps({"threads_created": thread_count}, indent=2))

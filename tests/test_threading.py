@@ -252,3 +252,54 @@ class TestBuildThreads:
             assert (
                 session.query(Email).filter_by(message_id="b@x").one().thread_id is None
             )
+
+
+class TestFullRebuild:
+    """MM-8: a root imported after its replies must re-root the thread on a
+    full rebuild; the incremental pass cannot repair it."""
+
+    def test_late_root_splits_thread_then_full_repairs(self, db: Database) -> None:
+        with db.session() as session:
+            # Replies arrive first; the true root a@x is not yet imported.
+            b = _email("b@x", in_reply_to="a@x", references="a@x",
+                       date=datetime(2024, 1, 2))
+            c = _email("c@x", in_reply_to="b@x", references="a@x b@x",
+                       date=datetime(2024, 1, 3))
+            d = _email("d@x", in_reply_to="c@x", references="a@x b@x c@x",
+                       date=datetime(2024, 1, 4))
+            session.add_all([b, c, d])
+            session.flush()
+            _build_threads(session)
+
+            # Provisionally rooted at b@x (the earliest ancestor present).
+            assert session.query(Email).filter_by(
+                message_id="c@x"
+            ).one().thread_id == "thread-b@x"
+
+            # The true root arrives later; it carries no parent reference.
+            a = _email("a@x", subject="root", date=datetime(2024, 1, 1))
+            session.add(a)
+            session.flush()
+
+            # Incremental cannot repair: a has no reference (not a candidate)
+            # and b/c/d are already threaded.
+            _build_threads(session)
+            assert session.query(Email).filter_by(message_id="a@x").one().thread_id is None
+            assert session.query(Email).filter_by(
+                message_id="d@x"
+            ).one().thread_id == "thread-b@x"
+
+            # Full rebuild re-roots the whole thread at a@x and drops the
+            # now-empty thread-b@x.
+            _build_threads(session, full=True)
+            for mid in ("a@x", "b@x", "c@x", "d@x"):
+                assert session.query(Email).filter_by(
+                    message_id=mid
+                ).one().thread_id == "thread-a@x"
+            assert (
+                session.query(Thread).filter_by(thread_id="thread-b@x").one_or_none()
+                is None
+            )
+            assert session.query(Thread).filter_by(
+                thread_id="thread-a@x"
+            ).one().email_count == 4
