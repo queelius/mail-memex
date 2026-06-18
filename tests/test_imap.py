@@ -994,14 +994,16 @@ class TestPullSync:
 
         with imap_db.session() as session:
             pull = PullSync(session, imap_account, TagMapper())
-            header = (
+            full = (
                 b"From: a@example.com\r\n"
                 b"Subject: Reply\r\n"
                 b"Message-ID: <reply@example.com>\r\n"
                 b"In-Reply-To: <parent@example.com>\r\n"
                 b"References: <root@example.com> <middle@example.com> <parent@example.com>\r\n"
+                b"\r\n"
+                b"body"
             )
-            data = {b"BODY[HEADER]": header, b"BODY[TEXT]": b"body", b"FLAGS": ()}
+            data = {b"BODY[]": full, b"FLAGS": ()}
             pull._process_message(
                 uid=1, data=data, folder="INBOX", result=PullResult(account="test", folder="INBOX")
             )
@@ -1110,17 +1112,17 @@ class TestPullSync:
             pull = PullSync(session, imap_account, mapper)
             result = PullResult(account="test", folder="INBOX")
 
-            header = (
+            full = (
                 b"From: Alice <alice@example.com>\r\n"
                 b"Subject: Test Email\r\n"
                 b"Date: Mon, 15 Jan 2024 10:00:00 -0500\r\n"
                 b"Message-ID: <newmsg@example.com>\r\n"
+                b"\r\n"
+                b"Hello, this is a test message."
             )
-            body = b"Hello, this is a test message."
 
             data = {
-                b"BODY[HEADER]": header,
-                b"BODY[TEXT]": body,
+                b"BODY[]": full,
                 b"FLAGS": (b"\\Seen",),
             }
 
@@ -1141,6 +1143,43 @@ class TestPullSync:
             assert email.imap_folder == "INBOX"
             assert "Hello, this is a test message." in email.body_text
 
+    def test_process_message_decodes_multipart_body(
+        self, imap_db: Database, imap_account: ImapAccountConfig
+    ) -> None:
+        """MM-4: multipart/encoded mail must be decoded to clean body_text and
+        body_html, not stored as raw MIME boundaries + base64."""
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
+
+        from mail_memex.imap.pull import PullResult, PullSync
+
+        msg = MIMEMultipart("alternative")
+        msg["From"] = "Bob <bob@example.com>"
+        msg["Subject"] = "Multipart"
+        msg["Message-ID"] = "<mp@example.com>"
+        # Force base64 transfer encoding on the text part.
+        part = MIMEText("The quick brown fox.", "plain")
+        msg.attach(part)
+        msg.attach(MIMEText("<p>The quick brown fox.</p>", "html"))
+        full = msg.as_bytes()
+        assert b"base64" in full or b"Content-Transfer-Encoding" in full
+
+        with imap_db.session() as session:
+            pull = PullSync(session, imap_account, TagMapper())
+            pull._process_message(
+                uid=42, data={b"BODY[]": full, b"FLAGS": ()},
+                folder="INBOX", result=PullResult(account="test", folder="INBOX"),
+            )
+            session.flush()
+            email = session.execute(
+                select(Email).where(Email.message_id == "mp@example.com")
+            ).scalar()
+            assert email is not None
+            assert "The quick brown fox." in (email.body_text or "")
+            # No MIME structure leaked into the stored body.
+            assert "Content-Transfer-Encoding" not in (email.body_text or "")
+            assert email.body_html and "quick brown fox" in email.body_html
+
     def test_process_message_updates_existing_email(
         self, imap_populated_db: Database, imap_account: ImapAccountConfig
     ) -> None:
@@ -1152,16 +1191,17 @@ class TestPullSync:
             pull = PullSync(session, imap_account, mapper)
             result = PullResult(account="test", folder="INBOX")
 
-            header = (
+            full = (
                 b"From: sender@example.com\r\n"
                 b"Subject: IMAP Email 1\r\n"
                 b"Date: Mon, 15 Jan 2024 10:00:00 -0500\r\n"
                 b"Message-ID: <imap1@example.com>\r\n"
+                b"\r\n"
+                b"Body text"
             )
 
             data = {
-                b"BODY[HEADER]": header,
-                b"BODY[TEXT]": b"Body text",
+                b"BODY[]": full,
                 b"FLAGS": (b"\\Seen", b"\\Answered"),
             }
 
@@ -1187,16 +1227,17 @@ class TestPullSync:
             pull = PullSync(session, imap_account, mapper)
             result = PullResult(account="test", folder="INBOX")
 
-            # Header without Message-ID
-            header = (
+            # Message without a Message-ID header.
+            full = (
                 b"From: sender@example.com\r\n"
                 b"Subject: No ID Email\r\n"
                 b"Date: Mon, 15 Jan 2024 10:00:00 -0500\r\n"
+                b"\r\n"
+                b"Body content"
             )
 
             data = {
-                b"BODY[HEADER]": header,
-                b"BODY[TEXT]": b"Body content",
+                b"BODY[]": full,
                 b"FLAGS": (),
             }
 
@@ -1205,11 +1246,17 @@ class TestPullSync:
 
             assert result.new_emails == 1
 
-            # Generated message_id should contain the uid
+            # MM-7: the fallback id is now a durable content hash
+            # (generated-<sha256>@mail-memex.local) shared with the file
+            # importers and stable across UIDVALIDITY resets, NOT the old
+            # UID-derived "imap-test-INBOX-300".
             email = session.execute(
-                select(Email).where(Email.message_id == "imap-test-INBOX-300")
+                select(Email).where(Email.imap_uid == 300)
             ).scalar()
             assert email is not None
+            assert email.message_id.startswith("generated-")
+            assert email.message_id.endswith("@mail-memex.local")
+            assert "INBOX-300" not in email.message_id
 
     def test_process_message_applies_tags_from_flags(
         self, imap_db: Database, imap_account: ImapAccountConfig
@@ -1671,17 +1718,16 @@ class TestPullSync:
             pull = PullSync(session, imap_account, mapper)
             result = PullResult(account="test", folder="INBOX")
 
-            long_body = b"A" * 1000
-
-            header = (
+            full = (
                 b"From: sender@example.com\r\n"
                 b"Message-ID: <preview@example.com>\r\n"
                 b"Date: Mon, 15 Jan 2024 10:00:00 -0500\r\n"
+                b"\r\n"
+                + b"A" * 1000
             )
 
             data = {
-                b"BODY[HEADER]": header,
-                b"BODY[TEXT]": long_body,
+                b"BODY[]": full,
                 b"FLAGS": (),
             }
 

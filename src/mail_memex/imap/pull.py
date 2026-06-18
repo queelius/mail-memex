@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import email as email_lib
-import email.utils as email_utils
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -11,18 +9,8 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import func, select
 
 from mail_memex.core.models import Email, ImapSyncState, Tag
-from mail_memex.core.recipients import parse_header
-from mail_memex.importers.parser import clean_message_id
-
-
-def _normalize_references(raw: str | None) -> str | None:
-    """Split a References header into tokens and re-join space-separated
-    without angle brackets — matching what the file/mbox importers store."""
-    if not raw:
-        return None
-    parts = [clean_message_id(tok) for tok in raw.split()]
-    cleaned = [p for p in parts if p]
-    return " ".join(cleaned) if cleaned else None
+from mail_memex.core.recipients import build_recipients
+from mail_memex.importers.parser import EmailParser
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -134,7 +122,12 @@ class PullSync:
         for i in range(0, len(uids), batch_size):
             batch_uids = uids[i : i + batch_size]
             try:
-                fetch_items = ["UID", "FLAGS", "ENVELOPE", "BODY.PEEK[HEADER]", "BODY.PEEK[TEXT]"]
+                # Fetch the FULL raw message (BODY.PEEK[]) so it can be run
+                # through EmailParser like the file importers, rather than the
+                # raw undecoded BODY[TEXT] (which is MIME boundaries + base64
+                # for multipart mail). BODY.PEEK[HEADER] is kept as a cheap
+                # fallback if a server omits the full body.
+                fetch_items = ["UID", "FLAGS", "ENVELOPE", "BODY.PEEK[]", "BODY.PEEK[HEADER]"]
                 if self.account.provider == "gmail":
                     fetch_items.extend(["X-GM-LABELS", "X-GM-THRID"])
 
@@ -173,25 +166,35 @@ class PullSync:
         folder: str,
         result: PullResult,
     ) -> None:
-        """Process a single fetched IMAP message."""
-        header_bytes = data.get(b"BODY[HEADER]", b"")
-        header_text = (
-            header_bytes.decode("utf-8", errors="replace")
-            if isinstance(header_bytes, bytes)
-            else str(header_bytes)
-        )
-        msg = email_lib.message_from_string(header_text)
+        """Process a single fetched IMAP message.
 
-        message_id = clean_message_id(msg.get("Message-ID"))
-        if not message_id:
-            message_id = f"imap-{self.account.name}-{folder}-{uid}"
+        Runs the full RFC822 message through the same EmailParser the file
+        importers use, so multipart/encoded mail yields decoded body_text and
+        body_html (not raw MIME/base64), and the durable message_id is the
+        real Message-ID or EmailParser's content-hash fallback
+        (``generated-<sha256>@mail-memex.local``) -- the same id the file
+        importers would assign for the identical message, and stable across
+        UIDVALIDITY resets (unlike the old UID-derived fallback).
+        """
+        # Prefer the full message; fall back to the header block if a server
+        # omits BODY[]. EmailParser tolerates either (a header-only blob just
+        # yields an empty body).
+        raw = data.get(b"BODY[]") or data.get(b"BODY[HEADER]") or b""
+        if not isinstance(raw, bytes):
+            raw = str(raw).encode("utf-8", errors="replace")
+        parsed = EmailParser().parse_bytes(raw)
 
-        to_header = msg.get("To", "")
-        cc_header = msg.get("Cc", "")
-        bcc_header = msg.get("Bcc", "")
-        to_addrs, cc_addrs, bcc_addrs = (
-            self._join_addrs(h) for h in (to_header, cc_header, bcc_header)
-        )
+        message_id = parsed.message_id
+        to_addrs = ",".join(parsed.to_addrs) if parsed.to_addrs else None
+        cc_addrs = ",".join(parsed.cc_addrs) if parsed.cc_addrs else None
+        bcc_addrs = ",".join(parsed.bcc_addrs) if parsed.bcc_addrs else None
+
+        def _recipients() -> list:
+            rows = []
+            rows.extend(build_recipients(parsed.to_addrs, parsed.to_names, "to"))
+            rows.extend(build_recipients(parsed.cc_addrs, parsed.cc_names, "cc"))
+            rows.extend(build_recipients(parsed.bcc_addrs, None, "bcc"))
+            return rows
 
         existing = self.session.execute(
             select(Email).where(Email.message_id == message_id)
@@ -206,39 +209,21 @@ class PullSync:
             existing.bcc_addrs = bcc_addrs
             # Keep normalized recipients in sync with the refreshed CSVs.
             existing.recipients.clear()
-            existing.recipients.extend(parse_header(to_header, "to"))
-            existing.recipients.extend(parse_header(cc_header, "cc"))
-            existing.recipients.extend(parse_header(bcc_header, "bcc"))
+            existing.recipients.extend(_recipients())
             target = existing
             result.updated_tags += 1
         else:
-            text_bytes = data.get(b"BODY[TEXT]", b"")
-            body_text = (
-                text_bytes.decode("utf-8", errors="replace")
-                if isinstance(text_bytes, bytes)
-                else (str(text_bytes) if text_bytes else "")
-            )
-
-            from_name, from_addr = email_lib.utils.parseaddr(msg.get("From", ""))
-
-            try:
-                date_tuple = email_lib.utils.parsedate_to_datetime(msg.get("Date", ""))
-            except Exception:
-                date_tuple = datetime.now(UTC)
-
             target = Email(
                 message_id=message_id,
-                from_addr=from_addr or "unknown@unknown",
-                from_name=from_name or None,
-                subject=msg.get("Subject"),
-                date=date_tuple,
-                in_reply_to=clean_message_id(msg.get("In-Reply-To")),
-                # Clean each token so the stored form matches what the
-                # file/mbox importers produce: space-joined, no angle
-                # brackets. Threading relies on this invariant.
-                references=_normalize_references(msg.get("References")),
-                body_text=body_text,
-                body_preview=body_text[:500] if body_text else None,
+                from_addr=parsed.from_addr or "unknown@unknown",
+                from_name=parsed.from_name,
+                subject=parsed.subject,
+                date=parsed.date or datetime.now(UTC),
+                in_reply_to=parsed.in_reply_to,
+                references=" ".join(parsed.references) if parsed.references else None,
+                body_text=parsed.body_text,
+                body_html=parsed.body_html,
+                body_preview=parsed.body_preview,
                 imap_uid=uid,
                 imap_account=self.account.name,
                 imap_folder=folder,
@@ -246,19 +231,12 @@ class PullSync:
                 cc_addrs=cc_addrs,
                 bcc_addrs=bcc_addrs,
             )
-            target.recipients.extend(parse_header(to_header, "to"))
-            target.recipients.extend(parse_header(cc_header, "cc"))
-            target.recipients.extend(parse_header(bcc_header, "bcc"))
+            target.recipients.extend(_recipients())
             self.session.add(target)
             self.session.flush()
             result.new_emails += 1
 
         self._apply_tags(target, self._tags_from_fetch(data))
-
-    @staticmethod
-    def _join_addrs(header: str) -> str | None:
-        """Extract addresses from a To/Cc/Bcc header and join with commas."""
-        return ",".join(addr for _, addr in email_utils.getaddresses([header]) if addr) or None
 
     def _tags_from_fetch(self, data: dict[bytes, Any]) -> set[str]:
         """Derive mail-memex tags from an IMAP FETCH response (flags + Gmail labels)."""
