@@ -103,6 +103,20 @@ _WRITE_ACTIONS = _codes("SQLITE_INSERT", "SQLITE_UPDATE", "SQLITE_DELETE")
 # WAL database if another connection holds locks.
 _BLOCKED_PRAGMAS = frozenset({"writable_schema", "journal_mode"})
 
+# Pragmas that must never be *set* via execute_sql. Their value persists on
+# the pooled SQLAlchemy connection (set only at connect time, not per
+# checkout), so a single `PRAGMA foreign_keys=OFF` would silently disable FK
+# enforcement for every later operation in the server process; synchronous
+# weakens crash durability; user_version/schema_version physically write the
+# database header even in "readonly" mode. Reads (arg2 is None) stay allowed.
+# We key on the name + a non-None arg2 rather than "any pragma with arg2"
+# because function-style read pragmas (table_info(x), foreign_key_list(x))
+# also pass an arg2 and must keep working for schema introspection.
+_NO_SET_PRAGMAS = frozenset({
+    "foreign_keys", "synchronous", "user_version", "schema_version",
+    "defer_foreign_keys", "ignore_check_constraints",
+})
+
 
 class _AuthContext:
     """Per-call authorizer state: remembers why the last statement was denied."""
@@ -120,16 +134,19 @@ class _AuthContext:
                 "are not allowed"
             )
             return sqlite3.SQLITE_DENY
-        if (
-            action == sqlite3.SQLITE_PRAGMA
-            and isinstance(arg1, str)
-            and arg1.lower() in _BLOCKED_PRAGMAS
-        ):
-            # arg1 is the pragma name (e.g. 'writable_schema'); arg2 is its
-            # value when setting (None when reading). Block both read and
-            # write for names on the danger list.
-            self.reason = f"PRAGMA {arg1} is blocked — bypasses schema safety."
-            return sqlite3.SQLITE_DENY
+        if action == sqlite3.SQLITE_PRAGMA and isinstance(arg1, str):
+            name = arg1.lower()
+            # arg1 is the pragma name; arg2 is the value when setting (None
+            # when reading a scalar pragma).
+            if name in _BLOCKED_PRAGMAS:
+                self.reason = f"PRAGMA {arg1} is blocked — bypasses schema safety."
+                return sqlite3.SQLITE_DENY
+            if arg2 is not None and name in _NO_SET_PRAGMAS:
+                self.reason = (
+                    f"Setting PRAGMA {arg1} is blocked: it persists on the "
+                    "pooled connection and weakens integrity/durability."
+                )
+                return sqlite3.SQLITE_DENY
         if self.readonly and action in _WRITE_ACTIONS:
             self.reason = (
                 "Write statements (INSERT/UPDATE/DELETE) are blocked in "

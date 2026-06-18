@@ -142,6 +142,49 @@ class TestExecuteSQL:
             assert isinstance(result, list)
             assert len(result) > 0
 
+    def test_readonly_blocks_pragma_foreign_keys_off(self, mcp_db: Database) -> None:
+        """MM-5: setting foreign_keys=OFF must be denied; it would otherwise
+        persist on the pooled connection and disable FK enforcement for the
+        whole process."""
+        from mail_memex.mcp.server import execute_sql_impl
+
+        with mcp_db.session() as session:
+            result = json.loads(
+                execute_sql_impl(session, "PRAGMA foreign_keys=OFF", readonly=True)
+            )
+            assert "error" in result
+            # And FK enforcement is still on afterwards.
+            fk = json.loads(execute_sql_impl(session, "PRAGMA foreign_keys"))
+            assert fk and list(fk[0].values())[0] in (1, "1")
+
+    def test_blocks_pragma_user_version_write(self, mcp_db: Database) -> None:
+        """MM-5: writing the DB header via PRAGMA user_version is blocked even
+        with readonly=False."""
+        from mail_memex.mcp.server import execute_sql_impl
+
+        with mcp_db.session() as session:
+            result = json.loads(
+                execute_sql_impl(session, "PRAGMA user_version=99", readonly=False)
+            )
+            assert "error" in result
+
+    def test_blocks_pragma_synchronous_off(self, mcp_db: Database) -> None:
+        from mail_memex.mcp.server import execute_sql_impl
+
+        with mcp_db.session() as session:
+            result = json.loads(
+                execute_sql_impl(session, "PRAGMA synchronous=OFF", readonly=True)
+            )
+            assert "error" in result
+
+    def test_pragma_read_still_allowed(self, mcp_db: Database) -> None:
+        """Reading a guarded pragma (no value) must still work."""
+        from mail_memex.mcp.server import execute_sql_impl
+
+        with mcp_db.session() as session:
+            result = json.loads(execute_sql_impl(session, "PRAGMA foreign_keys"))
+            assert isinstance(result, list)
+
     def test_ddl_keyword_in_string_literal_not_blocked(self, mcp_db: Database) -> None:
         """Regression: a string value containing 'DROP TABLE' or 'CREATE' is data,
         not DDL, and must reach the database."""
