@@ -47,7 +47,7 @@ import json
 import tarfile
 import zipfile
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -221,16 +221,26 @@ def _parse_jsonl_lines(reader) -> Iterable[dict[str, Any]]:
 def _parse_timestamp(ts: str | None) -> datetime | None:
     if not ts:
         return None
-    cleaned = ts.replace("Z", "+00:00").split("+")[0]
-    for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
-        try:
-            return datetime.strptime(cleaned, fmt)
-        except ValueError:
-            continue
+    normalized = ts.replace("Z", "+00:00")
+    dt: datetime | None = None
     try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(normalized)
     except ValueError:
+        for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
+            try:
+                dt = datetime.strptime(normalized, fmt)
+                break
+            except ValueError:
+                continue
+    if dt is None:
         return None
+    # [R1] Convert any offset-bearing timestamp to UTC, then store as naive
+    # (the email date column is naive UTC). The previous code split on '+' and
+    # kept only the wall-clock part, which silently shifted every timestamp by
+    # its offset and mishandled negative offsets entirely.
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 def _split_csv(value: Any) -> list[str]:

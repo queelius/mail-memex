@@ -95,6 +95,28 @@ class TestHelpers:
         assert _parse_timestamp(None) is None
         assert _parse_timestamp("") is None
 
+    def test_parse_timestamp_offset_converted_to_utc(self):
+        """An offset-bearing timestamp must be converted to UTC, not merely
+        have its offset truncated. 12:34:56+05:00 is 07:34:56 UTC."""
+        ts = _parse_timestamp("2026-04-23T12:34:56+05:00")
+        assert ts is not None
+        assert ts.tzinfo is None  # stored form is naive UTC
+        assert ts == datetime(2026, 4, 23, 7, 34, 56)
+
+    def test_parse_timestamp_negative_offset_converted_to_utc(self):
+        """A negative offset must also convert: 12:34:56-08:00 is 20:34:56 UTC."""
+        ts = _parse_timestamp("2026-04-23T12:34:56-08:00")
+        assert ts is not None
+        assert ts.tzinfo is None
+        assert ts == datetime(2026, 4, 23, 20, 34, 56)
+
+    def test_parse_timestamp_zulu_is_utc(self):
+        """A 'Z'-suffixed (UTC) timestamp parses to the same wall-clock time."""
+        ts = _parse_timestamp("2026-04-23T12:34:56Z")
+        assert ts is not None
+        assert ts.tzinfo is None
+        assert ts == datetime(2026, 4, 23, 12, 34, 56)
+
     def test_is_record_accepts_email(self):
         assert _is_mail_memex_arkiv_record(
             {"kind": "email", "uri": "mail-memex://email/foo@bar"}
@@ -407,3 +429,33 @@ class TestThreadedRoundTripRegression:
                 select(Email).where(Email.message_id == "nodate@test")
             ).scalar_one()
             assert email.date == datetime(1970, 1, 1)
+
+    def test_import_offset_timestamp_stored_as_utc(self, tmp_path):
+        """End-to-end: an email record whose timestamp carries a timezone
+        offset must land in the DB as the correct naive-UTC wall-clock time,
+        not the offset-truncated local time."""
+        fresh = Database(tmp_path / "fresh.db")
+        fresh.create_tables()
+
+        bundle = tmp_path / "records.jsonl"
+        rec = {
+            "kind": "email",
+            "content": "body",
+            "timestamp": "2026-04-23T12:34:56+05:00",
+            "metadata": {
+                "message_id": "tzoffset@test",
+                "from_addr": "x@y.com",
+                "subject": "offset",
+            },
+        }
+        bundle.write_text(json.dumps(rec) + "\n")
+
+        stats = import_arkiv(fresh, bundle)
+        assert stats["emails_added"] == 1
+        with fresh.session() as session:
+            email = session.execute(
+                select(Email).where(Email.message_id == "tzoffset@test")
+            ).scalar_one()
+            # 12:34:56 at +05:00 is 07:34:56 UTC. The buggy behaviour stores
+            # 12:34:56 (offset truncated, not converted).
+            assert email.date == datetime(2026, 4, 23, 7, 34, 56)

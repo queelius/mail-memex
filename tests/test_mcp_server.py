@@ -364,6 +364,19 @@ class TestGetRecord:
             assert result["to_addrs"] == "bob@example.com"
             assert result["thread_id"] == "thread-mcp-test"
 
+    def test_email_include_body(self, mcp_db: Database) -> None:
+        """include_body=True returns full body_text; default omits it (R2)."""
+        from mail_memex.mcp.server import get_record_impl
+
+        uri = "mail-memex://email/mcp-test@example.com"
+        with mcp_db.session() as session:
+            default = json.loads(get_record_impl(session, uri))
+            assert "body_text" not in default
+            assert "body_preview" in default
+
+            full = json.loads(get_record_impl(session, uri, include_body=True))
+            assert full["body_text"] == "This is a test for the MCP server."
+
     def test_thread_by_uri(self, mcp_db: Database) -> None:
         from mail_memex.mcp.server import get_record_impl
 

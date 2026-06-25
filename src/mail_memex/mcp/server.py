@@ -270,7 +270,7 @@ def _parse_uri(uri: str) -> tuple[str, str]:
     return kind, record_id
 
 
-def get_record_impl(session: Any, uri: str) -> str:
+def get_record_impl(session: Any, uri: str, include_body: bool = False) -> str:
     """Resolve a mail-memex:// URI and return the record as JSON.
 
     Accepted URIs:
@@ -309,6 +309,10 @@ def get_record_impl(session: Any, uri: str) -> str:
                 "subject": email.subject,
                 "date": _iso(email.date),
                 "body_preview": email.body_preview,
+                # [R2] Full body only when requested, so the federation RAG
+                # pipeline can fetch full text by URI instead of having to fall
+                # back to execute_sql. Default stays preview-only to bound size.
+                **({"body_text": email.body_text} if include_body else {}),
                 "thread_id": email.thread_id,
                 "archived_at": _iso(email.archived_at),
             }
@@ -430,12 +434,14 @@ def create_server() -> FastMCP:
             "mail-memex://email/<message_id>, mail-memex://thread/<thread_id>, "
             "and mail-memex://marginalia/<uuid>. Position fragments (e.g. "
             "'#part=2') are ignored for lookup. Returns soft-deleted records "
-            "too so cross-archive references stay resolvable."
+            "too so cross-archive references stay resolvable. Pass "
+            "include_body=true to include the full email body_text (default "
+            "returns only body_preview)."
         ),
     )
-    def get_record_tool(uri: str) -> str:
+    def get_record_tool(uri: str, include_body: bool = False) -> str:
         with db.session() as session:
-            return get_record_impl(session, uri)
+            return get_record_impl(session, uri, include_body=include_body)
 
     # ----- Domain tools -----
 
