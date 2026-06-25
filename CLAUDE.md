@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 mail-memex is a personal email archive with full-text search and SQL/MCP access. It stores email from mbox files, eml files, and IMAP accounts into a SQLite database with FTS5 indexing. LLM interaction happens via an MCP server built on FastMCP, exposing contract tools (execute_sql, get_schema, get_record) and domain tools (search_emails, marginalia CRUD).
 
-Part of the *-memex personal archive ecosystem alongside llm-memex (AI conversations), bookmark-memex (bookmarks), photo-memex (photos), book-memex (ebooks), and hugo-memex (static site content). The federation layer is `memex/` (design phase).
+Part of the *-memex personal archive ecosystem alongside llm-memex (AI conversations), bookmark-memex (bookmarks), photo-memex (photos), book-memex (ebooks), and hugo-memex (static site content). The federation layer is `memex/`, implemented (alpha, past MVP): trails, URI resolution, the conformance harness, and the cross-archive embeddings/RAG pipeline are implemented and tested; only the cross-archive graph remains design-only.
 
 ## Development Commands
 
@@ -45,7 +45,7 @@ ruff format src/mail_memex tests
 ## Architecture
 
 ### Core Layer (`src/mail_memex/core/`)
-- `models.py` - SQLAlchemy ORM models: Email, Thread, Tag, Attachment, ImapSyncState, Marginalia, MarginaliaTarget
+- `models.py` - SQLAlchemy ORM models: Email, Thread, Tag, Attachment, EmailRecipient, ImapSyncState, Marginalia, MarginaliaTarget
 - `database.py` - Database session management. SQLite with WAL mode and foreign keys enabled.
 - `config.py` - MailMemexConfig for YAML-based configuration with IMAP account support
 - `marginalia.py` - Marginalia CRUD operations (create, list, get, update, soft-delete, restore, purge)
@@ -67,7 +67,7 @@ FTS5 setup details:
 - Triggers on INSERT, UPDATE, DELETE keep `emails_fts` in sync with `emails`
 - Fallback: if FTS5 is unavailable, SearchEngine falls back to LIKE-based keyword search
 
-Thread reconstruction algorithm: emails are grouped by In-Reply-To and References headers into thread chains. When a thread_id is absent, the importer assigns one by walking the References chain to find the root message_id, then using that as the thread_id string.
+Thread reconstruction algorithm: emails are grouped by In-Reply-To and References headers into thread chains. When a thread_id is absent, the importer assigns one by walking the References chain to find the root message_id, then using `thread-<root_message_id>` as the thread_id string.
 
 Supported query operators: `from:`, `to:`, `subject:`, `after:`, `before:`, `tag:`, `-tag:`, `has:attachment`, `thread:`. Bare terms search subject and body via FTS5.
 
@@ -86,8 +86,8 @@ MCP tools:
 - `execute_sql(sql, readonly=True)` - Execute SQL against the database. DDL always blocked. Writes require `readonly=False`.
 - `get_schema()` - Returns full database schema as JSON with table descriptions, column info, and query tips.
 - `get_record(uri)` - Resolve a `mail-memex://` URI and return the record as JSON.
-- `search_emails(query, limit=20)` - Search emails using Gmail-like query operators. Returns ranked results.
-- `create_marginalia(target_uris, content, kind)` - Attach a note to one or more record URIs.
+- `search_emails(query, limit=50)` - Search emails using Gmail-like query operators. Returns ranked results.
+- `create_marginalia(target_uris, content, category=None, color=None, pinned=False)` - Attach a note to one or more record URIs.
 - `list_marginalia(target_uri)` - List all live marginalia for a URI.
 - `get_marginalia(uuid)` - Get a single marginalia record by UUID.
 - `update_marginalia(uuid, content)` - Update marginalia content.
