@@ -451,3 +451,55 @@ class TestCLIErrorHandling:
         result = runner.invoke(app, ["search"])
         # Either shows help or requires argument
         assert "query" in result.output.lower() or result.exit_code != 0
+
+
+
+class TestArchiveCli:
+    """R3: mail-memex archive / unarchive soft-delete an email."""
+
+    def _db_path(self, iso):
+        return iso["data_dir"] / "mail-memex.db"
+
+    def _seed(self, iso):
+        import sqlite3
+
+        runner.invoke(app, ["init"])
+        conn = sqlite3.connect(self._db_path(iso))
+        conn.execute(
+            "INSERT INTO emails "
+            "(message_id, from_addr, date, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                "cli@example.com",
+                "a@example.com",
+                "2024-01-01 00:00:00",
+                "2024-01-01 00:00:00",
+                "2024-01-01 00:00:00",
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    def _archived_at(self, iso):
+        import sqlite3
+
+        conn = sqlite3.connect(self._db_path(iso))
+        (val,) = conn.execute(
+            "SELECT archived_at FROM emails WHERE message_id='cli@example.com'"
+        ).fetchone()
+        conn.close()
+        return val
+
+    def test_archive_then_unarchive(self, isolated_mail_memex_config):
+        iso = isolated_mail_memex_config
+        self._seed(iso)
+
+        r = runner.invoke(app, ["archive", "cli@example.com"])
+        assert r.exit_code == 0, r.output
+        assert "Archived" in r.output
+        assert self._archived_at(iso) is not None
+
+        r2 = runner.invoke(app, ["unarchive", "cli@example.com"])
+        assert r2.exit_code == 0, r2.output
+        assert "Restored" in r2.output
+        assert self._archived_at(iso) is None

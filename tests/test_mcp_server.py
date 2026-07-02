@@ -583,3 +583,64 @@ class TestCreateServer:
             mcp = create_server()
         assert mcp is not None
         assert mcp.name == "mail-memex"
+
+
+class TestArchiveRecord:
+    """R3: soft-delete surface for emails/threads."""
+
+    URI = "mail-memex://email/mcp-test@example.com"
+
+    def test_archive_then_unarchive_email(self, mcp_db):
+        from mail_memex.mcp.server import (
+            archive_record_impl,
+            get_record_impl,
+            unarchive_record_impl,
+        )
+
+        with mcp_db.session() as session:
+            r = json.loads(archive_record_impl(session, self.URI))
+            assert r["status"] == "ok"
+            assert r["archived_at"] is not None
+            # still resolvable, flagged archived
+            rec = json.loads(get_record_impl(session, self.URI))
+            assert rec["archived_at"] is not None
+
+            r2 = json.loads(unarchive_record_impl(session, self.URI))
+            assert r2["archived_at"] is None
+            rec2 = json.loads(get_record_impl(session, self.URI))
+            assert rec2["archived_at"] is None
+
+    def test_archive_is_idempotent(self, mcp_db):
+        from mail_memex.mcp.server import archive_record_impl
+
+        with mcp_db.session() as session:
+            first = json.loads(archive_record_impl(session, self.URI))["archived_at"]
+            second = json.loads(archive_record_impl(session, self.URI))["archived_at"]
+            assert first == second
+
+    def test_archive_not_found(self, mcp_db):
+        from mail_memex.mcp.server import archive_record_impl
+
+        with mcp_db.session() as session:
+            r = json.loads(
+                archive_record_impl(session, "mail-memex://email/nope@example.com")
+            )
+            assert r["error"] == "NOT_FOUND"
+
+    def test_archive_unsupported_kind(self, mcp_db):
+        from mail_memex.mcp.server import archive_record_impl
+
+        with mcp_db.session() as session:
+            r = json.loads(
+                archive_record_impl(session, "mail-memex://marginalia/abc")
+            )
+            assert "cannot archive" in r["error"]
+
+    def test_hard_delete_email(self, mcp_db):
+        from mail_memex.mcp.server import archive_record_impl, get_record_impl
+
+        with mcp_db.session() as session:
+            r = json.loads(archive_record_impl(session, self.URI, hard=True))
+            assert r["deleted"] == "hard"
+            rec = json.loads(get_record_impl(session, self.URI))
+            assert rec["error"] == "NOT_FOUND"

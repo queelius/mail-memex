@@ -784,6 +784,49 @@ def tag_list(
         console.print(table)
 
 
+@app.command("archive")
+def archive_email(
+    message_id: str = typer.Argument(..., help="Message ID"),
+    hard: bool = typer.Option(
+        False, "--hard", help="Hard-delete instead of soft-delete (irreversible)"
+    ),
+    json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
+) -> None:
+    """Soft-delete an email (hidden from default reads, still resolvable), or --hard to remove it."""
+    from datetime import datetime, timezone
+
+    db = get_db()
+    with db.session() as session:
+        email = _require_email_or_exit(session, message_id, json)
+        mid = email.message_id
+        if hard:
+            session.delete(email)
+            session.commit()
+            if not json:
+                console.print(f"[green]Hard-deleted {mid}[/green]")
+            return
+        if email.archived_at is None:
+            email.archived_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        session.commit()
+        if not json:
+            console.print(f"[green]Archived {mid}[/green]")
+
+
+@app.command("unarchive")
+def unarchive_email(
+    message_id: str = typer.Argument(..., help="Message ID"),
+    json: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
+) -> None:
+    """Restore a soft-deleted email (clear its archived_at)."""
+    db = get_db()
+    with db.session() as session:
+        email = _require_email_or_exit(session, message_id, json)
+        email.archived_at = None
+        session.commit()
+        if not json:
+            console.print(f"[green]Restored {email.message_id}[/green]")
+
+
 @tag_app.command("batch")
 def tag_batch(
     query: str = typer.Argument(..., help="Search query to match emails"),

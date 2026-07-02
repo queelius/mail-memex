@@ -343,6 +343,67 @@ def get_record_impl(session: Any, uri: str, include_body: bool = False) -> str:
     return json.dumps(record, default=str)
 
 
+def _resolve_email_or_thread(session: Any, kind: str, record_id: str):
+    """Resolve an email (by message_id) or thread (by thread_id), else None."""
+    from mail_memex.core.models import Email, Thread
+
+    if kind == "email":
+        return session.query(Email).filter_by(message_id=record_id).first()
+    if kind == "thread":
+        return session.query(Thread).filter_by(thread_id=record_id).first()
+    return "unsupported"
+
+
+def archive_record_impl(session: Any, uri: str, hard: bool = False) -> str:
+    """Soft-delete (default) or hard-delete an email or thread by URI.
+
+    Soft delete sets archived_at so default reads hide the record while it
+    stays resolvable (get_record still returns it) and any trails/marginalia
+    referencing it survive. Marginalia has its own delete tool. Idempotent:
+    re-archiving preserves the original archived_at.
+    """
+    from datetime import datetime, timezone
+
+    try:
+        kind, record_id = _parse_uri(uri)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+
+    rec = _resolve_email_or_thread(session, kind, record_id)
+    if rec == "unsupported":
+        return json.dumps(
+            {"error": f"cannot archive kind {kind!r}; use email or thread"}
+        )
+    if rec is None:
+        return json.dumps({"error": "NOT_FOUND", "kind": kind, "id": record_id})
+    if hard:
+        session.delete(rec)
+        return json.dumps({"status": "ok", "uri": uri, "deleted": "hard"})
+    if rec.archived_at is None:
+        rec.archived_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    return json.dumps(
+        {"status": "ok", "uri": uri, "archived_at": rec.archived_at.isoformat()}
+    )
+
+
+def unarchive_record_impl(session: Any, uri: str) -> str:
+    """Clear archived_at on a soft-deleted email or thread by URI."""
+    try:
+        kind, record_id = _parse_uri(uri)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+
+    rec = _resolve_email_or_thread(session, kind, record_id)
+    if rec == "unsupported":
+        return json.dumps(
+            {"error": f"cannot unarchive kind {kind!r}; use email or thread"}
+        )
+    if rec is None:
+        return json.dumps({"error": "NOT_FOUND", "kind": kind, "id": record_id})
+    rec.archived_at = None
+    return json.dumps({"status": "ok", "uri": uri, "archived_at": None})
+
+
 def search_emails_impl(session: Any, query: str, limit: int = 50) -> str:
     """Search emails using the SearchEngine and return JSON results.
 
@@ -442,6 +503,36 @@ def create_server() -> FastMCP:
     def get_record_tool(uri: str, include_body: bool = False) -> str:
         with db.session() as session:
             return get_record_impl(session, uri, include_body=include_body)
+
+    @mcp.tool(
+        name="archive_record",
+        description=(
+            "Soft-delete an email or thread by URI so default reads hide it "
+            "while it stays resolvable (get_record still returns it). Pass "
+            "hard=true to remove it permanently. Accepts "
+            "mail-memex://email/<message_id> or mail-memex://thread/<thread_id>. "
+            "Marginalia has its own delete tool."
+        ),
+    )
+    def archive_record_tool(uri: str, hard: bool = False) -> str:
+        with db.session() as session:
+            result = archive_record_impl(session, uri, hard=hard)
+            session.commit()
+            return result
+
+    @mcp.tool(
+        name="unarchive_record",
+        description=(
+            "Restore a soft-deleted email or thread by URI (clear its "
+            "archived_at). Accepts mail-memex://email/<message_id> or "
+            "mail-memex://thread/<thread_id>."
+        ),
+    )
+    def unarchive_record_tool(uri: str) -> str:
+        with db.session() as session:
+            result = unarchive_record_impl(session, uri)
+            session.commit()
+            return result
 
     # ----- Domain tools -----
 
