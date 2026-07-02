@@ -400,7 +400,7 @@ def import_arkiv(
             if not isinstance(target_uris, list):
                 target_uris = []
 
-            create_marginalia(
+            created = create_marginalia(
                 session,
                 target_uris=[str(u) for u in target_uris],
                 content=rec.get("content") or "",
@@ -408,12 +408,13 @@ def import_arkiv(
                 color=meta.get("color"),
                 pinned=bool(meta.get("pinned", False)),
             )
-            # create_marginalia always generates a fresh UUID, but the
-            # bundle carries its own. Overwrite to preserve round-trip
-            # identity, then re-flush.
+            # create_marginalia always generates a fresh UUID, but the bundle
+            # carries its own. Look the row up by the UUID we were just handed
+            # back (reliable) rather than by MAX(id), which is fragile, then
+            # overwrite it to preserve round-trip identity and re-flush. [R4]
             session.flush()
             newly_created = session.execute(
-                select(Marginalia).order_by(Marginalia.id.desc()).limit(1)
+                select(Marginalia).where(Marginalia.uuid == created["uuid"])
             ).scalar_one_or_none()
             if newly_created is not None and newly_created.uuid != uuid:
                 newly_created.uuid = uuid
